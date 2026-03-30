@@ -26,3 +26,8 @@ start = "app.main:start"
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "boto3-stubs (>=1.42.78,<2.0.0)"
+]
