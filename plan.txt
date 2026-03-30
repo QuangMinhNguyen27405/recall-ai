@@ -116,7 +116,7 @@ Step 1 — Set up your project and environment
     S3 (local):   docker run -p 4566:4566 localstack/localstack
                   (or just use a real S3 bucket from day one)
 
-Step 2 — Set up PostgreSQL with SQLAlchemy + Alembic (models.py)
+Step 2 — Set up PostgreSQL with SQLAlchemy (models.py)
 
   database.py — async connection pool:
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
