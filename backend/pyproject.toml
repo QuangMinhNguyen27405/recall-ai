@@ -1,0 +1,24 @@
+[project]
+name = "recall-ai-backend"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "QuangMinhNguyen27405",email = "quangminh27405@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "fastapi (>=0.135.2,<0.136.0)",
+    "uvicorn (>=0.42.0,<0.43.0)",
+    "langchain (>=1.2.13,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "app", from = "src"}]
+
+[tool.poetry.scripts]
+start = "app.main:start"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

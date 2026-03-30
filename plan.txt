@@ -1,0 +1,499 @@
+================================================================
+  RECALLAI — STEP BY STEP BUILD PLAN
+================================================================
+
+A RAG-powered student note app built with LangChain, LangGraph,
+and FastAPI backend + React Vite with shadcn/ui frontend.
+
+Students organize notes in a workspace → class → folder → file
+hierarchy. RAG retrieval is scoped to whatever level they are
+currently working in - ask inside Biology and it only searches
+Biology notes, not everything.
+
+  Workspace (the student)
+  └── Class: Biology 101
+  │   ├── Folder: Midterm
+  │   │   ├── lecture_3.pdf
+  │   │   └── my_notes.txt
+  │   └── Folder: Final
+  │       └── chapter_summary.pdf
+  └── Class: History
+      └── Folder: Essay Research
+          └── sources.pdf
+
+4 phases, ~8 weeks to a working product.
+
+
+----------------------------------------------------------------
+  PHASE 1 — CORE RAG PIPELINE + WORKSPACE STRUCTURE (Week 1–2)
+  Goal: A working app with folder-file structure by end of week 2.
+----------------------------------------------------------------
+
+Step 1 — Set up your project and environment
+
+  Folder structure:
+    recallai/
+    ├── backend/
+    │   ├── main.py
+    │   ├── ingest.py
+    │   ├── qa.py
+    │   ├── models.py          ← SQLAlchemy DB models
+    │   ├── routes/
+    │   │   ├── workspace.py   ← class + folder CRUD
+    │   │   ├── files.py       ← upload + delete files
+    │   │   └── chat.py        ← scoped Q&A
+    │   ├── db/
+    │   │   ├── chroma/        ← vector store
+    │   │   └── recallai.db    ← SQLite
+    │   └── uploads/
+    └── frontend/
+        ├── src/
+        │   ├── components/
+        │   │   ├── ui/              ← shadcn components
+        │   │   ├── Sidebar.tsx      ← file tree sidebar
+        │   │   ├── FileTree.tsx     ← recursive tree nodes
+        │   │   ├── ChatWindow.tsx
+        │   │   ├── FileUpload.tsx
+        │   │   └── MessageBubble.tsx
+        │   ├── pages/
+        │   │   ├── Dashboard.tsx
+        │   │   ├── Chat.tsx
+        │   │   ├── Flashcards.tsx
+        │   │   └── QuizHistory.tsx
+        │   ├── lib/
+        │   │   └── api.ts           ← FastAPI client functions
+        │   └── main.tsx
+        ├── components.json
+        └── vite.config.ts
+
+  Backend install:
+    pip install langchain langchain-anthropic langchain-community
+                chromadb pymupdf sentence-transformers
+                fastapi uvicorn python-multipart
+                sqlalchemy aiosqlite
+
+  Frontend setup:
+    npm create vite@latest frontend -- --template react-ts
+    cd frontend
+    npx shadcn@latest init
+    npm install
+
+Step 2 — Define the SQLite data models (models.py)
+  - Four tables that form the hierarchy tree:
+
+    workspaces   id, name, user_id
+    classes      id, name, workspace_id
+    folders      id, name, class_id, parent_folder_id  ← allows nesting
+    files        id, name, path, folder_id, class_id, ingested_at
+
+  - parent_folder_id on folders allows unlimited folder nesting
+  - class_id on files is denormalized for fast scoped retrieval
+    without needing to join through folders every time
+
+  - API endpoints for workspace management:
+    POST   /api/classes                  create a class
+    GET    /api/classes                  list all classes
+    POST   /api/classes/{id}/folders     create a folder inside a class
+    POST   /api/folders/{id}/folders     create a nested subfolder
+    GET    /api/classes/{id}/tree        return full folder+file tree
+    DELETE /api/classes/{id}             delete class + all its content
+    DELETE /api/folders/{id}             delete folder + contents
+    PATCH  /api/classes/{id}             rename a class
+    PATCH  /api/folders/{id}             rename a folder
+
+Step 3 — Build ingest.py with scoped metadata
+  - Load PDFs using PyMuPDFLoader
+  - Split into 500-char chunks with 50-char overlap using
+    RecursiveCharacterTextSplitter
+  - Embed with HuggingFace all-MiniLM-L6-v2 (free, local)
+  - Store ALL chunks in ONE ChromaDB collection
+  - Tag every chunk with its full location as metadata:
+
+    metadatas=[{
+        "file_id":    "abc123",
+        "file_name":  "lecture_3.pdf",
+        "class_id":   "bio101",
+        "class_name": "Biology 101",
+        "folder_id":  "midterm",
+        "folder_name":"Midterm",
+        "page":       3
+    }]
+
+  - One collection for everything — filtering, not separation
+
+  - File upload endpoint:
+    POST /api/folders/{id}/upload    upload file into a folder
+    DELETE /api/files/{id}           delete file + purge its chunks
+                                     from ChromaDB by file_id
+
+Step 4 — Build qa.py with scoped retrieval
+  - Retrieval accepts a scope dict that filters ChromaDB metadata
+  - Scope can be set at any level of the hierarchy:
+
+    {"class_id":  "bio101"}      → whole class
+    {"folder_id": "midterm"}     → single folder only
+    {"file_id":   "abc123"}      → single file only
+    {}                           → search everything
+
+  - Query with scope:
+    results = collection.query(
+        query_texts=[question],
+        n_results=4,
+        where=scope if scope else None
+    )
+
+  - Return answer + source metadata (file name, page, folder)
+  - TEST IN TERMINAL FIRST before wiring to the API
+
+Step 5 — Build FastAPI chat endpoint (scoped)
+  - POST /api/chat accepts question + scope object
+  - scope comes from whichever node is selected in the sidebar
+  - Returns answer, sources, and the scope that was searched
+
+  - POST /api/sources    — lists all ingested documents
+  - Enable CORS for localhost:5173 (Vite dev server)
+
+  main.py CORS setup:
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+Step 6 — Build the sidebar file tree (React + shadcn)
+  - Sidebar.tsx holds the full workspace tree in state
+  - FileTree.tsx is a recursive component — renders class nodes,
+    folder nodes, and file nodes at any depth
+
+  - shadcn components to use:
+    <Collapsible>    expanding/collapsing class and folder nodes
+    <ScrollArea>     the full sidebar tree scroll container
+    <Dialog>         "New Class" and "New Folder" modal forms
+    <Input>          naming a new class or folder
+    <ContextMenu>    right-click any node → rename / delete / move
+    <Breadcrumb>     shows current location above the chat window
+    <Badge>          file count per class, e.g. "3 files"
+
+  - Tree node icons:
+    📚  class node
+    📁  folder node
+    📄  file node (pdf, docx, txt)
+
+  - Clicking any node sets the active scope for the chat window
+  - Active node is highlighted in the sidebar
+
+  - Chat window scope indicator above the input bar:
+    Searching in: Biology 101 > Midterm    [Search all classes]
+    Clicking "Search all classes" clears scope — cross-class search
+
+Step 7 — Build ChatWindow.tsx and FileUpload.tsx
+  - ChatWindow.tsx
+      shadcn <ScrollArea> for message history
+      shadcn <Input> + <Button> for the chat bar
+      Always sends current scope with every question
+      MessageBubble.tsx for user vs assistant messages
+
+  - FileUpload.tsx
+      shadcn <Card> drag-and-drop zone
+      Only active if a folder is selected in the sidebar
+      Shows which folder the file will land in
+      Calls POST /api/folders/{id}/upload on file drop
+      Shows progress with shadcn <Progress>
+
+  - lib/api.ts
+      Typed fetch functions for all backend endpoints
+      Exports: createClass, createFolder, uploadFile,
+               deleteFile, deleteFolder, chat, getSources
+
+Step 8 — Wire in LangSmith tracing
+  - Add to backend .env file
+  - Every chain step visible in LangSmith dashboard
+  - Do this from day one — saves enormous debugging time
+
+  backend/.env:
+    LANGCHAIN_TRACING_V2=true
+    LANGCHAIN_API_KEY=your-key-here
+    ANTHROPIC_API_KEY=your-key-here
+
+
+----------------------------------------------------------------
+  PHASE 2 — BETTER RETRIEVAL (Week 3–4)
+  Goal: Smarter scoped answers, streaming UI, polish the tree.
+----------------------------------------------------------------
+
+Step 9 — Add streaming responses (SSE)
+  - Backend: FastAPI StreamingResponse with text/event-stream
+  - Frontend: fetch with ReadableStream reader
+  - Messages stream token-by-token into the chat bubble
+  - Use shadcn <Skeleton> as loading placeholder before
+    first token arrives
+
+  Backend stream route:
+    from fastapi.responses import StreamingResponse
+    async def stream_answer():
+        async for chunk in chain.astream(question):
+            yield f"data: {chunk}\n\n"
+    return StreamingResponse(stream_answer(),
+                             media_type="text/event-stream")
+
+Step 10 — Add chat history scoped per class
+  - Backend: ConversationBufferWindowMemory keyed by class_id
+  - Each class gets its own memory — Biology and History never mix
+  - Frontend: pass class_id + session_id in every /api/chat request
+  - Switching classes in the sidebar resets the visible chat history
+
+Step 11 — Add source citations to every answer
+  - Backend: return source filename, folder path, and page number
+  - Frontend: render citation pills below each answer bubble
+    using shadcn <Badge> — e.g. "lecture_3.pdf · p.3 · Midterm"
+  - Clicking a badge highlights the file in the sidebar tree
+
+Step 12 — Implement hybrid search (still scoped)
+  - Add BM25 retriever alongside vector search
+  - Combine with EnsembleRetriever — both respect the scope filter
+  - Exact terms like "mitochondria ATP" are never missed
+  - Hybrid search applies within whatever scope is active
+
+Step 13 — Add reranking
+  - After retrieving top-k, rerank with a cross-encoder model
+  - Use CohereRerank or a local cross-encoder
+  - Only top 3 reranked chunks go to the LLM
+
+Step 14 — Polish the sidebar tree
+  - Drag-and-drop to move files between folders
+  - Inline rename on double-click (shadcn <Input> in place)
+  - File count badges update live after upload or delete
+  - Empty state: prompt to create a class if workspace is empty
+  - Keyboard shortcuts: N for new folder, Del to delete selected
+
+
+----------------------------------------------------------------
+  PHASE 3 — STUDY TOOLS WITH LANGGRAPH AGENT (Week 5–6)
+  Goal: Turn RecallAI into a full AI study assistant.
+  All tools respect the active scope automatically.
+----------------------------------------------------------------
+
+Step 15 — Build the LangGraph intent classifier (first node)
+  - Entry point for the agent — scope is part of the agent state
+  - Classifies every input: "explain" / "quiz" / "summarize"
+    / "flashcards" / "gaps" / "chat"
+  - Routes to the correct tool node
+  - All downstream nodes inherit the scope from state
+  - Frontend: show a subtle intent label above each response
+    using shadcn <Badge variant="outline">
+
+Step 16 — Build the quiz generator tool node
+  - Retrieves chunks scoped to the active class or folder
+  - Generates 5-10 MCQs from retrieved chunks
+  - Backend returns structured JSON: {question, options, answer}
+  - Frontend: dedicated Quiz page with shadcn <RadioGroup>
+    for answer selection and <Button> to submit
+  - Show score and explanations after submission
+  - Save results to SQLite linked to class_id for history
+
+Step 17 — Build the flashcard generator tool node
+  - Retrieves chunks scoped to active class or folder
+  - Auto-generates Q&A pairs from the content
+  - Frontend: Flashcard page with flip animation using
+    Tailwind transition classes + shadcn <Card>
+  - Flashcard sets are saved and grouped by class
+  - Export button: download as JSON or plain text
+
+Step 18 — Build the summarizer tool node
+  - Summarizes content scoped to active class, folder, or file
+  - Three levels: brief / standard / detailed
+  - Frontend: shadcn <Tabs> to toggle between summary levels
+  - Copy to clipboard button with shadcn <Button> + toast
+
+Step 19 — Build the gap analysis tool node
+  - Compares notes in a class against a student-provided syllabus
+  - Identifies topics in the syllabus with no matching notes
+  - Frontend: gap report shown as a list of missing topics
+    with shadcn <Alert> for each gap found
+
+Step 20 — Build the self-correcting retrieval loop
+  - Agent evaluates chunk quality after each scoped retrieval
+  - If weak: rephrase query and retry within same scope
+  - After 2 retries: widen scope one level up (folder → class)
+    and notify the student that it searched a wider area
+  - If still failing: return graceful fallback message
+  - Frontend: show "searching your notes" + current scope
+    using shadcn <Loader2> spinner while the loop runs
+
+
+----------------------------------------------------------------
+  PHASE 4 — POLISH AND RELIABILITY (Week 7–8)
+  Goal: A product you'd be comfortable sharing publicly.
+----------------------------------------------------------------
+
+Step 21 — Add hallucination guardrail
+  - Second LLM call verifies answer is grounded in the notes
+  - If not grounded — retry with stricter prompt
+  - If still failing — refuse with a clear message
+  - Frontend: "verified" or "low confidence" badge on each answer
+    using shadcn <Badge> with semantic color variants
+
+Step 22 — Add confidence scoring
+  - Check similarity score of top retrieved chunk
+  - If below threshold (e.g. 0.5) — warn the student
+  - Frontend: shadcn <Alert variant="warning"> above the answer
+
+Step 23 — Extend to multi-format ingestion
+  - .docx files via python-docx
+  - .pptx files via python-pptx
+  - Audio lectures via OpenAI Whisper transcription
+  - YouTube links via youtube-transcript-api
+  - All formats flow into the same chunking pipeline with
+    the same scoped metadata tagging
+  - Frontend: FileUpload accepts all file types
+    Show correct icon per file type in the tree sidebar
+
+Step 24 — Add query logging and study analytics
+  - Log every question + scope + retrieved chunks + answer
+    to SQLite, linked to class_id
+  - Backend: GET /api/analytics?class_id={id}
+  - Frontend: Dashboard shows per-class stats
+    (questions asked, files uploaded, quiz scores, weak topics)
+  - shadcn <Card> stat grid, <Badge> for weak topic tags
+
+Step 25 — Production prep
+  - Move ChromaDB to Pinecone for cloud vector storage
+    (metadata filtering works identically in Pinecone)
+  - Move SQLite to PostgreSQL
+  - Store uploaded files in S3 or Cloudflare R2
+    (organized by workspace_id/class_id/folder_id/filename)
+  - Add environment-based config (dev / staging / prod)
+  - Deploy backend on Railway or Render
+  - Deploy frontend on Vercel
+
+
+================================================================
+  TECH STACK SUMMARY
+================================================================
+
+  Frontend:
+    React 18 + Vite (TypeScript)
+    shadcn/ui for all UI components
+    Tailwind CSS for styling
+    Fetch API with ReadableStream for SSE streaming
+
+  Backend:
+    Python 3.11+
+    FastAPI with StreamingResponse for streaming
+    LangChain — loaders, splitters, retrievers, memory
+    LangGraph — agent nodes, intent routing, tool use
+    Anthropic Claude via langchain-anthropic
+    all-MiniLM-L6-v2 via HuggingFace (free local embeddings)
+    ChromaDB — single collection, metadata-filtered per scope
+    SQLite + SQLAlchemy — workspace/class/folder/file models
+    (swap ChromaDB → Pinecone, SQLite → PostgreSQL for prod)
+
+  Observability:
+    LangSmith — traces every chain step from day one
+
+  Deployment:
+    Frontend: Vercel
+    Backend:  Railway or Render
+
+
+================================================================
+  DATA MODEL SUMMARY
+================================================================
+
+  workspaces
+    id, name, user_id
+
+  classes
+    id, name, workspace_id
+
+  folders
+    id, name, class_id, parent_folder_id   ← null = root folder
+
+  files
+    id, name, path, folder_id, class_id, ingested_at
+
+  ChromaDB chunk metadata
+    file_id, file_name, class_id, class_name,
+    folder_id, folder_name, page
+
+  Retrieval scopes
+    Whole class:    where={"class_id": "bio101"}
+    Single folder:  where={"folder_id": "midterm"}
+    Single file:    where={"file_id":   "abc123"}
+    Everything:     where=None
+
+
+================================================================
+  KEY shadcn COMPONENTS PER PAGE
+================================================================
+
+  Sidebar (file tree):
+    <Collapsible>    expand/collapse class and folder nodes
+    <ScrollArea>     full tree scroll container
+    <Dialog>         new class / new folder modals
+    <ContextMenu>    right-click → rename / delete / move
+    <Badge>          file count per class
+    <Breadcrumb>     current location path
+
+  Chat page:
+    <ScrollArea>     message history container
+    <Input>          chat text input
+    <Button>         send button
+    <Badge>          source citations, intent label, scope indicator
+    <Skeleton>       loading placeholder while streaming
+    <Avatar>         user vs assistant icon
+    <Alert>          low confidence or gap warnings
+
+  Upload page:
+    <Card>           drag-and-drop upload zone
+    <Progress>       upload progress bar
+    <Badge>          file type indicator
+
+  Quiz page:
+    <RadioGroup>     answer option selection
+    <Button>         submit answer
+    <Alert>          correct / incorrect feedback
+    <Progress>       quiz completion bar
+
+  Flashcard page:
+    <Card>           flashcard front/back with flip animation
+    <Button>         next / previous / export
+    <Tabs>           switch between class flashcard sets
+
+  Dashboard page:
+    <Card>           stat summary (docs, questions, score)
+    <Badge>          weak topic tags per class
+    <Alert>          low confidence warnings
+
+
+================================================================
+  WHAT TO LEARN AND IN WHAT ORDER
+================================================================
+
+  Week 1:  Python async/await, FastAPI basics, CORS setup
+           SQLAlchemy models — workspace/class/folder/file tree
+  Week 2:  Embeddings + cosine similarity + metadata filtering
+           Build scoped RAG manually before using LangChain
+  Week 3:  LangChain — loaders, splitters, retrievers, memory
+           ChromaDB where= filtering for scoped retrieval
+  Week 4:  React + Vite + shadcn, recursive tree component,
+           fetch + SSE streaming
+  Week 5:  LangGraph — state with scope, nodes, conditional edges
+  Week 6:  SQLite persistence for quiz/flashcard history per class
+  Week 7+: Pinecone, PostgreSQL, S3 for production readiness
+
+
+================================================================
+  GOLDEN RULE
+================================================================
+
+  Build a working thing first, then improve it.
+
+  Phase 1 ships in a week. Get it in front of real students.
+  See what breaks. Fix those specific things. The full feature
+  list is a roadmap — not a checklist you have to finish before
+  showing anyone.
+
+================================================================
