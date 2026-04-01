@@ -48,22 +48,30 @@ Step 1 — Set up your project and environment
   Folder structure:
     recallai/
     ├── backend/
-    │   ├── main.py
-    │   ├── models.py            ← SQLAlchemy PostgreSQL models
-    │   ├── database.py          ← async PostgreSQL connection pool
-    │   ├── pipeline/
-    │   │   ├── parser.py        ← PDF / PPTX / DOCX / TXT parsing
-    │   │   ├── chunker.py       ← text splitting logic
-    │   │   └── embedder.py      ← embed + store in OpenSearch
-    │   ├── routes/
-    │   │   ├── workspaces.py    ← workspace CRUD
-    │   │   ├── files.py         ← file upload + status polling
-    │   │   ├── notes.py         ← text note input
-    │   │   └── chat.py          ← workspace-scoped Q&A
-    │   ├── services/
-    │   │   ├── s3.py            ← boto3 S3 helpers
-    │   │   └── opensearch.py    ← OpenSearch client + search
-    │   └── qa.py                ← scoped retrieval + LLM answer
+    │   ├── src/app/
+    │   │   ├── main.py
+    │   │   ├── config/
+    │   │   │   ├── settings.py      ← Pydantic settings (env vars)
+    │   │   │   └── logger.py        ← logging setup
+    │   │   ├── models/
+    │   │   │   ├── user.py          ← User model
+    │   │   │   ├── workspace.py     ← Workspace model
+    │   │   │   ├── file.py          ← File model (upload status, s3_key)
+    │   │   │   └── chat_sessions.py ← ChatSession model (JSONB messages)
+    │   │   ├── database.py          ← async PostgreSQL connection pool
+    │   │   ├── pipeline/
+    │   │   │   ├── parser.py        ← PDF / PPTX / DOCX / TXT parsing
+    │   │   │   ├── chunker.py       ← text splitting logic
+    │   │   │   └── embedder.py      ← embed + store in OpenSearch
+    │   │   ├── routes/
+    │   │   │   ├── workspaces.py    ← workspace CRUD
+    │   │   │   ├── files.py         ← file upload + status polling
+    │   │   │   ├── notes.py         ← text note input
+    │   │   │   └── chat.py          ← workspace-scoped Q&A
+    │   │   ├── services/
+    │   │   │   ├── s3.py            ← boto3 S3 helpers
+    │   │   │   └── opensearch.py    ← OpenSearch client + search
+    │   │   └── qa.py                ← scoped retrieval + LLM answer
     └── frontend/
         ├── src/
         │   ├── components/
