@@ -5,25 +5,21 @@
 A RAG-powered student note app built with LangChain, LangGraph,
 FastAPI backend + React Vite with shadcn/ui frontend.
 
-Students organize notes in a workspace → class → folder → file
-hierarchy. Files and text notes are uploaded independently —
-FastAPI returns immediately and parsing/indexing happens in a
-background task. All vectors are stored in Amazon OpenSearch.
-All metadata is stored in PostgreSQL (RDS).
+Students organize notes in a simple workspace → files structure.
+Each workspace is an isolated context — RAG retrieval is scoped
+to the active workspace only.
 
-  Workspace (the student)
-  └── Class: Biology 101
-  │   ├── Folder: Midterm
-  │   │   ├── lecture_3.pdf
-  │   │   └── my_notes.txt
-  │   └── Folder: Final
-  │       └── chapter_summary.pdf
-  └── Class: History
-      └── Folder: Essay Research
-          └── sources.pdf
+  Workspace: Biology 101
+    ├── lecture_3.pdf
+    ├── chapter_summary.pdf
+    └── my_notes (text note)
+
+  Workspace: History
+    ├── essay_sources.pdf
+    └── lecture_notes (text note)
 
   Upload pipeline (file):
-    Browser → POST /api/files/upload (multipart)
+    Browser → POST /api/workspaces/{id}/upload (multipart)
     FastAPI → save to S3 → create DB record (status=processing)
     FastAPI → return {file_id, status} immediately
     BackgroundTask → parse → chunk → embed → OpenSearch
@@ -31,21 +27,20 @@ All metadata is stored in PostgreSQL (RDS).
     Frontend polls GET /api/files/{id}/status every 2s
 
   Upload pipeline (text note):
-    Browser → POST /api/notes/text
-    FastAPI → save raw text to S3 as .txt → create DB record
-    FastAPI → return {note_id, status} immediately
+    Browser → POST /api/workspaces/{id}/notes
+    FastAPI → save text to S3 as .txt → create DB record
+    FastAPI → return {file_id, status} immediately
     BackgroundTask → chunk → embed → OpenSearch
     BackgroundTask → update status=ready in PostgreSQL
 
   Both pipelines share the same parser/chunker/embedder code.
-  Only the trigger changes — multipart upload vs text body.
 
 4 phases, ~8 weeks to a working product.
 
 
 ----------------------------------------------------------------
   PHASE 1 — CORE RAG PIPELINE + WORKSPACE STRUCTURE (Week 1–2)
-  Goal: A working app with background parsing by end of week 2.
+  Goal: A working app with workspace-scoped RAG by end of week 2.
 ----------------------------------------------------------------
 
 Step 1 — Set up your project and environment
@@ -61,10 +56,10 @@ Step 1 — Set up your project and environment
     │   │   ├── chunker.py       ← text splitting logic
     │   │   └── embedder.py      ← embed + store in OpenSearch
     │   ├── routes/
-    │   │   ├── workspace.py     ← class + folder CRUD
+    │   │   ├── workspaces.py    ← workspace CRUD
     │   │   ├── files.py         ← file upload + status polling
     │   │   ├── notes.py         ← text note input
-    │   │   └── chat.py          ← scoped Q&A
+    │   │   └── chat.py          ← workspace-scoped Q&A
     │   ├── services/
     │   │   ├── s3.py            ← boto3 S3 helpers
     │   │   └── opensearch.py    ← OpenSearch client + search
@@ -73,8 +68,7 @@ Step 1 — Set up your project and environment
         ├── src/
         │   ├── components/
         │   │   ├── ui/              ← shadcn components
-        │   │   ├── Sidebar.tsx      ← file tree sidebar
-        │   │   ├── FileTree.tsx     ← recursive tree nodes
+        │   │   ├── Sidebar.tsx      ← workspace + file list
         │   │   ├── ChatWindow.tsx
         │   │   ├── FileUpload.tsx   ← file + text input
         │   │   └── MessageBubble.tsx
@@ -103,20 +97,17 @@ Step 1 — Set up your project and environment
     npx shadcn@latest init
     npm install
 
-  AWS services to provision:
-    S3 bucket               — file + text note storage
-    Amazon OpenSearch        — Serverless collection for vectors
-    RDS PostgreSQL           — metadata, workspace tree, file status
+  AWS services:
+    S3 bucket          — file + text note storage
+    Amazon OpenSearch   — Serverless collection for vectors
+    RDS PostgreSQL      — metadata, workspace tree, file status
 
-  Local dev setup:
-    PostgreSQL:   docker run -p 5432:5432 \
-                    -e POSTGRES_PASSWORD=secret postgres:16
-    OpenSearch:   docker run -p 9200:9200 \
-                    opensearchproject/opensearch:2
-    S3 (local):   docker run -p 4566:4566 localstack/localstack
-                  (or just use a real S3 bucket from day one)
+  Local dev:
+    docker run -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:16
+    docker run -p 9200:9200 opensearchproject/opensearch:2
+    (use local filesystem instead of S3 during dev — swap later)
 
-Step 2 — Set up PostgreSQL with SQLAlchemy (models.py)
+Step 2 — Set up PostgreSQL with SQLAlchemy + Alembic (models.py)
 
   database.py — async connection pool:
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -131,38 +122,31 @@ Step 2 — Set up PostgreSQL with SQLAlchemy (models.py)
     workspaces
       id (UUID), name, user_id, created_at
 
-    classes
-      id (UUID), name, workspace_id (FK), created_at
-
-    folders
-      id (UUID), name, class_id (FK),
-      parent_folder_id (FK, nullable),
-      created_at
-
     files
-      id (UUID), name, s3_key, folder_id (FK), class_id (FK),
+      id (UUID), name, s3_key, workspace_id (FK),
       file_type (pdf | pptx | docx | txt | text_note),
       status (processing | ready | error),
       error_reason (nullable),
       ingested_at (nullable), created_at
 
     chat_sessions
-      id (UUID), class_id (FK), session_id,
+      id (UUID), workspace_id (FK), session_id,
       messages (JSONB), updated_at
 
     quiz_results
-      id (UUID), class_id (FK), question, chosen_answer,
+      id (UUID), workspace_id (FK), question, chosen_answer,
       correct_answer, is_correct, created_at
 
     flashcard_sets
-      id (UUID), class_id (FK), name, cards (JSONB), created_at
+      id (UUID), workspace_id (FK), name,
+      cards (JSONB), created_at
 
     gap_reports
-      id (UUID), class_id (FK), syllabus_text,
+      id (UUID), workspace_id (FK), syllabus_text,
       gaps (JSONB), created_at
 
     query_log
-      id (UUID), class_id (FK), question, scope (JSONB),
+      id (UUID), workspace_id (FK), question, scope (JSONB),
       answer, sources (JSONB), is_grounded,
       confidence_score, created_at
 
@@ -171,16 +155,13 @@ Step 2 — Set up PostgreSQL with SQLAlchemy (models.py)
     alembic revision --autogenerate -m "initial schema"
     alembic upgrade head
 
-  API endpoints for workspace management:
-    POST   /api/classes                  create a class
-    GET    /api/classes                  list all classes
-    POST   /api/classes/{id}/folders     create a folder
-    POST   /api/folders/{id}/folders     create a nested subfolder
-    GET    /api/classes/{id}/tree        return full folder+file tree
-    DELETE /api/classes/{id}             delete class + all content
-    DELETE /api/folders/{id}             delete folder + contents
-    PATCH  /api/classes/{id}             rename
-    PATCH  /api/folders/{id}             rename
+  Workspace API endpoints:
+    POST   /api/workspaces           create a workspace
+    GET    /api/workspaces           list all workspaces
+    GET    /api/workspaces/{id}      get workspace + its files
+    PATCH  /api/workspaces/{id}      rename a workspace
+    DELETE /api/workspaces/{id}      delete workspace + all files
+                                     + purge OpenSearch chunks
 
 Step 3 — Set up Amazon OpenSearch Serverless
 
@@ -190,18 +171,21 @@ Step 3 — Set up Amazon OpenSearch Serverless
       "settings": { "index.knn": true },
       "mappings": {
         "properties": {
-          "embedding":   { "type": "knn_vector", "dimension": 384 },
-          "content":     { "type": "text" },
-          "file_id":     { "type": "keyword" },
-          "file_name":   { "type": "keyword" },
-          "class_id":    { "type": "keyword" },
-          "class_name":  { "type": "keyword" },
-          "folder_id":   { "type": "keyword" },
-          "folder_name": { "type": "keyword" },
-          "page":        { "type": "integer" }
+          "embedding":      { "type": "knn_vector", "dimension": 384 },
+          "content":        { "type": "text" },
+          "file_id":        { "type": "keyword" },
+          "file_name":      { "type": "keyword" },
+          "workspace_id":   { "type": "keyword" },
+          "workspace_name": { "type": "keyword" },
+          "page":           { "type": "integer" }
         }
       }
     }
+
+  Retrieval scopes:
+    Active workspace:  filter: [{"term": {"workspace_id": "abc"}}]
+    Single file:       filter: [{"term": {"file_id": "xyz"}}]
+    Everything:        no filter
 
   backend/.env:
     DATABASE_URL=postgresql+asyncpg://user:pass@host/recallai
@@ -216,64 +200,26 @@ Step 3 — Set up Amazon OpenSearch Serverless
 
 Step 4 — Build the parsing pipeline (pipeline/)
 
-  All three modules are shared by both the file upload and
-  text note routes — only the entry point differs.
-
   parser.py — extract raw text by input type:
-    .pdf   → PyMuPDF — text + page number per page
-    .pptx  → python-pptx — text per slide
-    .docx  → python-docx — paragraphs + tables
-    .txt   → read directly
-    text   → already a string, pass through as page 1
+    .pdf        → PyMuPDF — text + page number per page
+    .pptx       → python-pptx — text per slide
+    .docx       → python-docx — paragraphs + tables
+    .txt        → read directly
+    text_note   → already a string, treat as single page
     Returns: list of {text, page_or_slide}
 
-  chunker.py — split into chunks:
+  chunker.py:
     RecursiveCharacterTextSplitter
     chunk_size=500, chunk_overlap=50
-    Preserve page/slide number in each chunk metadata
+    Preserve page number in each chunk metadata
 
-  embedder.py — embed and store:
+  embedder.py:
     Embed with all-MiniLM-L6-v2 (384 dimensions)
-    Bulk index into OpenSearch "notes" with full metadata:
+    Bulk index into OpenSearch "notes" with metadata:
       content, embedding, file_id, file_name,
-      class_id, class_name, folder_id, folder_name, page
+      workspace_id, workspace_name, page
 
-Step 5 — Build the file upload route (routes/files.py)
-
-  FastAPI receives the file, saves it to S3, creates a DB
-  record, fires a background task, and returns immediately.
-
-  @router.post("/folders/{folder_id}/upload")
-  async def upload_file(
-      folder_id: str,
-      file: UploadFile,
-      background_tasks: BackgroundTasks,
-      db: AsyncSession = Depends(get_db)
-  ):
-      # 1. Upload to S3
-      s3_key = f"workspaces/.../folders/{folder_id}/{file.filename}"
-      await s3.upload_fileobj(file.file, S3_BUCKET, s3_key)
-
-      # 2. Create file record in PostgreSQL (status=processing)
-      file_record = await db.create_file(
-          name=file.filename,
-          s3_key=s3_key,
-          folder_id=folder_id,
-          status="processing"
-      )
-
-      # 3. Fire background task — returns to client immediately
-      background_tasks.add_task(
-          run_pipeline,
-          file_id=file_record.id,
-          s3_key=s3_key,
-          file_type=file.content_type,
-          metadata=file_record.metadata
-      )
-
-      return {"file_id": file_record.id, "status": "processing"}
-
-  run_pipeline (the background task):
+  run_pipeline() — shared background task:
     async def run_pipeline(file_id, s3_key, file_type, metadata):
         try:
             raw = await s3.download(s3_key)
@@ -284,41 +230,74 @@ Step 5 — Build the file upload route (routes/files.py)
         except Exception as e:
             await db.update_file_status(file_id, "error", str(e))
 
-  File status endpoint (frontend polls this):
+Step 5 — Build the file upload route (routes/files.py)
+
+  @router.post("/workspaces/{workspace_id}/upload")
+  async def upload_file(
+      workspace_id: str,
+      file: UploadFile,
+      background_tasks: BackgroundTasks,
+      db: AsyncSession = Depends(get_db)
+  ):
+      # 1. Upload to S3
+      s3_key = f"workspaces/{workspace_id}/{file.filename}"
+      await s3.upload_fileobj(file.file, S3_BUCKET, s3_key)
+
+      # 2. Insert file record (status=processing)
+      file_record = await db.create_file(
+          name=file.filename,
+          s3_key=s3_key,
+          workspace_id=workspace_id,
+          status="processing"
+      )
+
+      # 3. Fire background task — returns to client immediately
+      background_tasks.add_task(
+          run_pipeline,
+          file_id=file_record.id,
+          s3_key=s3_key,
+          file_type=file.content_type,
+          metadata={"workspace_id": workspace_id, ...}
+      )
+
+      return {"file_id": file_record.id, "status": "processing"}
+
+  File status endpoint:
     GET /api/files/{id}/status
     → SELECT status, error_reason FROM files WHERE id = ?
-    → returns {file_id, status, error_reason}
 
-  Delete endpoint (removes from S3 + OpenSearch + PostgreSQL):
+  Delete file:
     DELETE /api/files/{id}
     → delete S3 object
     → delete OpenSearch chunks where file_id = ?
     → delete file row from PostgreSQL
 
+  Retry failed file:
+    POST /api/files/{id}/retry
+    → fetch s3_key from PostgreSQL
+    → reset status = "processing"
+    → re-trigger run_pipeline() as a new background task
+
 Step 6 — Build the text note route (routes/notes.py)
 
-  Text input follows the exact same pipeline. FastAPI writes
-  the text to S3 as a .txt file so storage is consistent,
-  then fires the same background task.
-
-  @router.post("/folders/{folder_id}/notes")
+  @router.post("/workspaces/{workspace_id}/notes")
   async def create_text_note(
-      folder_id: str,
-      body: TextNoteInput,   # {title: str, content: str}
+      workspace_id: str,
+      body: TextNoteInput,    # {title: str, content: str}
       background_tasks: BackgroundTasks,
       db: AsyncSession = Depends(get_db)
   ):
-      # 1. Save text to S3 as a .txt file
+      # 1. Save text as .txt to S3
       note_id = str(uuid4())
-      s3_key = f"workspaces/.../folders/{folder_id}/{note_id}.txt"
+      s3_key = f"workspaces/{workspace_id}/notes/{note_id}.txt"
       await s3.put_object(Bucket=S3_BUCKET, Key=s3_key,
                           Body=body.content.encode())
 
-      # 2. Create file record (file_type=text_note, status=processing)
+      # 2. Insert file record (file_type=text_note, status=processing)
       file_record = await db.create_file(
           name=body.title,
           s3_key=s3_key,
-          folder_id=folder_id,
+          workspace_id=workspace_id,
           file_type="text_note",
           status="processing"
       )
@@ -329,141 +308,126 @@ Step 6 — Build the text note route (routes/notes.py)
           file_id=file_record.id,
           s3_key=s3_key,
           file_type="text_note",
-          metadata=file_record.metadata
+          metadata={"workspace_id": workspace_id, ...}
       )
 
       return {"file_id": file_record.id, "status": "processing"}
 
-  Both routes call the same run_pipeline() function.
-  The parser handles file_type="text_note" by reading the
-  S3 content directly as plain text — no special parsing needed.
+Step 7 — Build qa.py with workspace-scoped retrieval
 
-Step 7 — Build qa.py with scoped OpenSearch retrieval
+  def retrieve(question: str, workspace_id: str,
+               file_id: str = None, k: int = 4):
 
-  Scope levels:
-    {"class_id":  "bio101"}   → whole class
-    {"folder_id": "midterm"}  → single folder
-    {"file_id":   "abc123"}   → single file
-    {}                        → search everything
+    scope filter:
+      if file_id:   filter on file_id   (single file search)
+      else:         filter on workspace_id  (whole workspace)
 
-  OpenSearch scoped KNN query:
-    {
-      "size": 4,
-      "query": {
-        "bool": {
-          "must": {
-            "knn": { "embedding": { "vector": [...], "k": 4 } }
-          },
-          "filter": [
-            { "term": { "class_id": "bio101" } }
-          ]
+    OpenSearch KNN query:
+      {
+        "size": k,
+        "query": {
+          "bool": {
+            "must": {
+              "knn": { "embedding": { "vector": [...], "k": k } }
+            },
+            "filter": [
+              { "term": { "workspace_id": "abc123" } }
+            ]
+          }
         }
       }
-    }
 
-  Return: answer + source metadata (file name, page, folder)
+  Return: answer + source metadata (file name, page)
 
-Step 8 — Build FastAPI chat endpoint (scoped)
-  - POST /api/chat accepts question + scope
-  - Scope comes from whichever node is selected in the sidebar
-  - Returns answer, sources, scope that was searched
+Step 8 — Build FastAPI chat endpoint
+  - POST /api/chat accepts question + workspace_id
+    and optional file_id for single-file search
+  - Streams answer back via SSE from the start (no plain version)
+  - Returns sources alongside the streamed answer
   - Enable CORS for localhost:5173
 
-  main.py CORS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+Step 9 — Build the sidebar (React + shadcn)
 
-Step 9 — Build the sidebar file tree (React + shadcn)
-  - Sidebar.tsx + FileTree.tsx (recursive component)
+  Simple two-panel layout:
+    Left:  workspace list + file list for active workspace
+    Right: chat window
 
-  shadcn components:
-    <Collapsible>    expand/collapse class and folder nodes
-    <ScrollArea>     full sidebar scroll container
-    <Dialog>         new class / new folder / new note modals
-    <Input>          naming a new class, folder, or text note
-    <Textarea>       text note content input
-    <ContextMenu>    right-click → rename / delete / move
-    <Breadcrumb>     current location above chat window
-    <Badge>          file count per class
+  Sidebar.tsx:
+    Top section: list of workspaces
+      shadcn <Button> per workspace — click to switch
+      Active workspace highlighted
+      shadcn <Dialog> + <Input> to create a new workspace
+      shadcn <ContextMenu> right-click → rename / delete
 
-  File status indicators in the tree:
-    ⏳  processing   (background task is running)
-    ✅  ready        (indexed and searchable)
-    ❌  error        (click to retry — re-triggers background task)
+    Bottom section: files in the active workspace
+      One row per file — name + file type icon + status badge
+      shadcn <Badge> for status: processing / ready / error
+      shadcn <Button> to upload a new file or add a text note
+      Click a file to scope chat to that file only
 
-  Chat scope indicator above the input bar:
-    Searching in: Biology 101 > Midterm    [Search all classes]
+  Scope indicator above the chat input:
+    Searching in: Biology 101    [Search all workspaces]
+    or
+    Searching in: Biology 101 > lecture_3.pdf    [Back to workspace]
 
 Step 10 — Build ChatWindow.tsx and FileUpload.tsx
-  - ChatWindow.tsx
-      shadcn <ScrollArea> for message history
-      shadcn <Input> + <Button> for the chat bar
-      Always sends current scope with every question
-      Only enabled when at least one file is status="ready"
 
-  - FileUpload.tsx — handles both input types in one component:
-      Tab 1: File upload
-        shadcn <Card> drag-and-drop zone
-        Calls POST /api/folders/{id}/upload (multipart)
-        Supported types: PDF, PPTX, DOCX, TXT
-      Tab 2: Text note
-        shadcn <Input> for title
-        shadcn <Textarea> for content
-        Calls POST /api/folders/{id}/notes
-      Both tabs: poll GET /api/files/{id}/status every 2s
-      Both tabs: show shadcn <Progress> while status=processing
+  ChatWindow.tsx:
+    shadcn <ScrollArea> for message history
+    shadcn <Input> + <Button> for chat bar
+    Sends workspace_id (and optional file_id) with every question
+    Only enabled when at least one file is status="ready"
+    MessageBubble.tsx for user vs assistant messages
 
-  - lib/api.ts exports:
-      createClass, createFolder,
-      uploadFile, createTextNote,
-      pollFileStatus, retryFile,
-      deleteFile, deleteFolder,
-      chat, getSources
+  FileUpload.tsx — two tabs in one component:
+    Tab 1: File upload
+      shadcn <Card> drag-and-drop zone
+      Accepted types: PDF, PPTX, DOCX, TXT
+      Calls POST /api/workspaces/{id}/upload
+    Tab 2: Text note
+      shadcn <Input> for title
+      shadcn <Textarea> for content
+      Calls POST /api/workspaces/{id}/notes
+    Both tabs:
+      Show shadcn <Progress> while status=processing
+      Poll GET /api/files/{id}/status every 2s
+
+  lib/api.ts exports:
+    createWorkspace, getWorkspaces, deleteWorkspace, renameWorkspace,
+    uploadFile, createTextNote, pollFileStatus,
+    retryFile, deleteFile, chat
 
 Step 11 — Wire in LangSmith tracing
   - LANGCHAIN_TRACING_V2=true + LANGCHAIN_API_KEY in .env
-  - Every chain and retrieval step traced in LangSmith
-  - Do this from day one
+  - Every chain and retrieval step traced from day one
 
 
 ----------------------------------------------------------------
   PHASE 2 — BETTER RETRIEVAL (Week 3–4)
-  Goal: Smarter scoped answers, streaming, polish the tree.
+  Goal: Smarter answers, streaming, hybrid search.
 ----------------------------------------------------------------
 
 Step 12 — Add streaming responses (SSE)
+  - Already planned from step 8 — implement fully here
   - Backend: FastAPI StreamingResponse with text/event-stream
-  - Frontend: fetch with ReadableStream reader
-  - Messages stream token-by-token into the chat bubble
+  - Frontend: fetch with ReadableStream, token-by-token rendering
+  - shadcn <Skeleton> placeholder before first token arrives
 
-  Backend:
-    from fastapi.responses import StreamingResponse
-    async def stream_answer():
-        async for chunk in chain.astream(question):
-            yield f"data: {chunk}\n\n"
-    return StreamingResponse(stream_answer(),
-                             media_type="text/event-stream")
-
-Step 13 — Add chat history scoped per class
-  - Backend: ConversationBufferWindowMemory keyed by class_id
-    persisted in the chat_sessions PostgreSQL table
-  - Frontend: pass class_id + session_id in every /api/chat
-  - Switching classes resets the visible chat history
+Step 13 — Add chat history scoped per workspace
+  - ConversationBufferWindowMemory keyed by workspace_id
+  - Persisted in chat_sessions PostgreSQL table
+  - Switching workspaces resets the visible chat history
+  - Pass workspace_id + session_id in every /api/chat request
 
 Step 14 — Add source citations to every answer
-  - Backend: return filename, folder, page from OpenSearch metadata
+  - Backend: return file name + page from OpenSearch metadata
   - Frontend: citation pills below each answer bubble
-    e.g. "lecture_3.pdf · p.3 · Midterm" using shadcn <Badge>
-  - Clicking a badge highlights the file in the sidebar
+    e.g. "lecture_3.pdf · p.3" using shadcn <Badge>
+  - Clicking a badge scopes chat to that file
 
-Step 15 — Implement hybrid search (BM25 + KNN vector)
+Step 15 — Implement hybrid search (BM25 + KNN)
   - OpenSearch supports both in one query natively
-  - Combine knn + match in a bool query
-  - Both respect the active scope filter
+  - Both searches respect the active workspace_id filter
   - Exact terms like "mitochondria ATP" are never missed
 
 Step 16 — Add reranking
@@ -471,65 +435,54 @@ Step 16 — Add reranking
     or a local cross-encoder model
   - Only top 3 reranked chunks go to the LLM
 
-Step 17 — Add retry on failed background tasks
-  - POST /api/files/{id}/retry
-    → fetch s3_key from PostgreSQL
-    → reset status to "processing"
-    → re-trigger run_pipeline() as a new background task
-  - Frontend: retry button on ❌ error files in the sidebar
-
-Step 18 — Polish the sidebar tree
-  - Drag-and-drop files between folders
-    (update folder_id in PostgreSQL + S3 copy + delete old key)
-  - Inline rename on double-click
-  - File count badges update live after upload or delete
-  - Empty state prompt when workspace has no classes yet
-  - Keyboard shortcuts: N for new item, Del to delete selected
+Step 17 — Polish the sidebar
+  - Inline rename on double-click (workspace name)
+  - Retry button on files with status="error"
+  - File count shown per workspace
+  - Empty state when workspace has no files yet
 
 
 ----------------------------------------------------------------
   PHASE 3 — STUDY TOOLS WITH LANGGRAPH AGENT (Week 5–6)
   Goal: Turn RecallAI into a full AI study assistant.
-  All tools respect active scope + query from OpenSearch.
-  All results persisted in PostgreSQL.
+  All tools are scoped to the active workspace.
 ----------------------------------------------------------------
 
-Step 19 — Build the LangGraph intent classifier (first node)
-  - Scope is part of LangGraph agent state
+Step 18 — Build the LangGraph intent classifier (first node)
+  - workspace_id is part of the LangGraph agent state
   - Classifies: "explain" / "quiz" / "summarize"
     / "flashcards" / "gaps" / "chat"
-  - All downstream nodes inherit scope and query OpenSearch
-    with the same filter
+  - All downstream nodes inherit workspace_id and query
+    OpenSearch with the same workspace filter
   - Frontend: intent label using shadcn <Badge variant="outline">
 
-Step 20 — Build the quiz generator tool node
-  - Retrieves chunks scoped to active class or folder
+Step 19 — Build the quiz generator tool node
+  - Retrieves chunks scoped to active workspace
   - Generates 5-10 MCQs
-  - Saves to quiz_results table in PostgreSQL
+  - Saves to quiz_results table linked to workspace_id
   - Frontend: shadcn <RadioGroup> + score + explanations
 
-Step 21 — Build the flashcard generator tool node
-  - Retrieves chunks scoped to active class or folder
+Step 20 — Build the flashcard generator tool node
+  - Retrieves chunks scoped to active workspace
   - Auto-generates Q&A pairs
-  - Saves to flashcard_sets table in PostgreSQL
+  - Saves to flashcard_sets table linked to workspace_id
   - Frontend: flip animation + export as JSON or plain text
 
-Step 22 — Build the summarizer tool node
-  - Summarizes content scoped to active class, folder, or file
+Step 21 — Build the summarizer tool node
+  - Summarizes content scoped to active workspace or single file
   - Three levels: brief / standard / detailed
   - Frontend: shadcn <Tabs> + copy to clipboard
 
-Step 23 — Build the gap analysis tool node
-  - Compares notes against a student-provided syllabus
-  - Saves to gap_reports table in PostgreSQL
+Step 22 — Build the gap analysis tool node
+  - Compares workspace notes against a student-provided syllabus
+  - Saves to gap_reports table linked to workspace_id
   - Frontend: missing topics list using shadcn <Alert>
 
-Step 24 — Build the self-correcting retrieval loop
+Step 23 — Build the self-correcting retrieval loop
   - Agent evaluates OpenSearch result quality after each query
-  - If weak: rephrase and retry within same scope
-  - After 2 retries: widen scope one level (folder → class)
-  - Logs all retries to query_log in PostgreSQL
-  - Frontend: "searching your notes" + scope using <Loader2>
+  - If weak: rephrase and retry within same workspace scope
+  - After 2 retries: return graceful fallback message
+  - Frontend: "searching your notes" using shadcn <Loader2>
 
 
 ----------------------------------------------------------------
@@ -537,40 +490,33 @@ Step 24 — Build the self-correcting retrieval loop
   Goal: A product you'd be comfortable sharing publicly.
 ----------------------------------------------------------------
 
-Step 25 — Add hallucination guardrail
+Step 24 — Add hallucination guardrail
   - Second LLM call verifies answer is grounded in the notes
-  - Logs result to query_log table in PostgreSQL
+  - Logs result to query_log table
   - Frontend: "verified" or "low confidence" badge per answer
 
-Step 26 — Add confidence scoring
+Step 25 — Add confidence scoring
   - Check KNN similarity score of top OpenSearch result
   - Store score in query_log table
   - If below threshold (e.g. 0.7) warn the student
   - Frontend: shadcn <Alert variant="warning"> above answer
 
-Step 27 — Add study analytics
+Step 26 — Add study analytics
   - All events already in PostgreSQL — query_log, quiz_results,
     flashcard_sets, gap_reports
-  - Backend: GET /api/analytics?class_id={id}
-    uses PostgreSQL GROUP BY + JSONB aggregations
-  - Frontend: Dashboard with shadcn <Card> stat grid
+  - Backend: GET /api/analytics?workspace_id={id}
+  - Frontend: Dashboard with shadcn <Card> stat grid per workspace
+    (questions asked, files uploaded, quiz scores, weak topics)
 
-Step 28 — Production hardening
-  - PostgreSQL: RDS with Multi-AZ, connection pooling via RDS Proxy
+Step 27 — Production hardening
+  - PostgreSQL: RDS with Multi-AZ, RDS Proxy for connection pooling
   - Run Alembic migrations as a deployment step, not on startup
-  - FastAPI: run with multiple Gunicorn workers on ECS or App Runner
+  - FastAPI: Gunicorn with multiple workers on ECS or App Runner
   - S3: enable versioning + lifecycle rules
-  - OpenSearch: enable encryption at rest + in transit
-  - Use AWS Secrets Manager for all credentials
+  - OpenSearch: encryption at rest + in transit
+  - AWS Secrets Manager for all credentials
   - Deploy frontend on Vercel
   - Deploy FastAPI on AWS ECS or App Runner
-
-  Migration note — if you outgrow BackgroundTasks:
-    The run_pipeline() function is self-contained.
-    To move to Lambda + SQS later:
-      1. Wrap run_pipeline() in a Lambda handler
-      2. Replace background_tasks.add_task() with sqs.send_message()
-      3. Parser / chunker / embedder code is completely unchanged
 
 
 ================================================================
@@ -578,29 +524,28 @@ Step 28 — Production hardening
 ================================================================
 
   FILE UPLOAD:
-    Browser → POST /api/folders/{id}/upload (multipart)
-    FastAPI → boto3 upload to S3
-    FastAPI → INSERT file row (status=processing) → PostgreSQL
+    Browser → POST /api/workspaces/{id}/upload (multipart)
+    FastAPI → boto3 upload → S3 at workspaces/{id}/{filename}
+    FastAPI → INSERT files row (status=processing) → PostgreSQL
     FastAPI → background_tasks.add_task(run_pipeline, ...)
-    FastAPI → return {file_id, status} ← client gets this instantly
-    BackgroundTask → parser.py (PDF/PPTX/DOCX → pages)
-    BackgroundTask → chunker.py → embedder.py → OpenSearch
+    FastAPI → return {file_id, status=processing} instantly
+    BackgroundTask → parser → chunker → embedder → OpenSearch
     BackgroundTask → UPDATE status=ready → PostgreSQL
     Frontend polls GET /api/files/{id}/status every 2s
 
   TEXT NOTE:
-    Browser → POST /api/folders/{id}/notes {title, content}
-    FastAPI → boto3 put_object (text as .txt to S3)
-    FastAPI → INSERT file row (file_type=text_note, status=processing)
+    Browser → POST /api/workspaces/{id}/notes {title, content}
+    FastAPI → boto3 put_object → S3 at workspaces/{id}/notes/{id}.txt
+    FastAPI → INSERT files row (file_type=text_note, status=processing)
     FastAPI → background_tasks.add_task(run_pipeline, ...)
-    FastAPI → return {file_id, status} ← client gets this instantly
-    BackgroundTask → parser.py (reads .txt → single page)
-    BackgroundTask → chunker.py → embedder.py → OpenSearch
+    FastAPI → return {file_id, status=processing} instantly
+    BackgroundTask → parser (reads .txt as single page)
+    BackgroundTask → chunker → embedder → OpenSearch
     BackgroundTask → UPDATE status=ready → PostgreSQL
     Frontend polls GET /api/files/{id}/status every 2s
 
-  run_pipeline() is called identically in both cases.
-  file_type tells parser.py which extraction path to take.
+  run_pipeline() is identical in both cases.
+  file_type tells parser.py which extraction path to use.
 
 
 ================================================================
@@ -624,12 +569,12 @@ Step 28 — Production hardening
     boto3 — S3 file storage
 
   AWS Services:
-    S3                      — file + text note storage
-    Amazon OpenSearch        — Serverless, vector + full-text search
-    RDS PostgreSQL           — all metadata, status, analytics
-    RDS Proxy                — PostgreSQL connection pooling
-    ECS or App Runner        — FastAPI server
-    Secrets Manager          — credentials
+    S3                — file + text note storage
+    Amazon OpenSearch  — Serverless, KNN + full-text search
+    RDS PostgreSQL     — all metadata, status, analytics
+    RDS Proxy          — connection pooling
+    ECS or App Runner  — FastAPI server
+    Secrets Manager    — credentials
 
   Embeddings:
     all-MiniLM-L6-v2 via HuggingFace (384 dimensions, free)
@@ -640,11 +585,7 @@ Step 28 — Production hardening
     python-docx — Word paragraphs + tables
 
   Observability:
-    LangSmith — traces every chain + retrieval step from day one
-
-  Future migration path (if needed):
-    Replace BackgroundTasks with Lambda + SQS
-    run_pipeline() code stays 100% identical
+    LangSmith — traces every chain + retrieval step
 
 
 ================================================================
@@ -652,48 +593,57 @@ Step 28 — Production hardening
 ================================================================
 
   workspaces       id, name, user_id, created_at
-  classes          id, name, workspace_id, created_at
-  folders          id, name, class_id, parent_folder_id, created_at
-  files            id, name, s3_key, folder_id, class_id,
+
+  files            id, name, s3_key, workspace_id (FK),
                    file_type, status, error_reason,
                    ingested_at, created_at
-  chat_sessions    id, class_id, session_id, messages (JSONB),
-                   updated_at
-  quiz_results     id, class_id, question, chosen_answer,
-                   correct_answer, is_correct, created_at
-  flashcard_sets   id, class_id, name, cards (JSONB), created_at
-  gap_reports      id, class_id, syllabus_text, gaps (JSONB),
-                   created_at
-  query_log        id, class_id, question, scope (JSONB),
-                   answer, sources (JSONB), is_grounded,
-                   confidence_score, created_at
 
-  Key decisions:
-    UUID primary keys throughout
-    JSONB for flexible structured data (messages, cards, sources)
-    class_id denormalized on files for fast scope queries
-    Alembic manages all schema changes
+  chat_sessions    id, workspace_id (FK), session_id,
+                   messages (JSONB), updated_at
+
+  quiz_results     id, workspace_id (FK), question,
+                   chosen_answer, correct_answer,
+                   is_correct, created_at
+
+  flashcard_sets   id, workspace_id (FK), name,
+                   cards (JSONB), created_at
+
+  gap_reports      id, workspace_id (FK), syllabus_text,
+                   gaps (JSONB), created_at
+
+  query_log        id, workspace_id (FK), question,
+                   scope (JSONB), answer, sources (JSONB),
+                   is_grounded, confidence_score, created_at
+
+  S3 key structure:
+    workspaces/{workspace_id}/{filename}         ← files
+    workspaces/{workspace_id}/notes/{id}.txt     ← text notes
+
+  OpenSearch scope filters:
+    Whole workspace:  {"term": {"workspace_id": "abc"}}
+    Single file:      {"term": {"file_id": "xyz"}}
+    Everything:       no filter
 
 
 ================================================================
   KEY shadcn COMPONENTS PER PAGE
 ================================================================
 
-  Sidebar (file tree):
-    <Collapsible>    expand/collapse nodes
-    <ScrollArea>     full tree scroll container
-    <Dialog>         new class / folder / text note modals
-    <Textarea>       text note content input
-    <ContextMenu>    right-click → rename / delete / retry
-    <Badge>          file count, processing status
-    <Breadcrumb>     current location path
+  Sidebar:
+    <Button>         one per workspace, click to switch
+    <ScrollArea>     workspace list + file list
+    <Dialog>         create new workspace modal
+    <Input>          workspace name input
+    <ContextMenu>    right-click workspace → rename / delete
+    <Badge>          file status (processing / ready / error)
+                     file count per workspace
 
   Upload component (FileUpload.tsx):
     <Tabs>           switch between file upload and text note
     <Card>           drag-and-drop zone for files
+    <Input>          text note title
     <Textarea>       text note content
-    <Progress>       processing indicator while status=processing
-    <Badge>          file type indicator
+    <Progress>       processing status indicator
 
   Chat page:
     <ScrollArea>     message history
@@ -713,10 +663,10 @@ Step 28 — Production hardening
   Flashcard page:
     <Card>           flip animation
     <Button>         next / previous / export
-    <Tabs>           switch between class sets
+    <Tabs>           switch between workspace flashcard sets
 
   Dashboard page:
-    <Card>           stat summary
+    <Card>           stat summary per workspace
     <Badge>          weak topic tags
     <Alert>          confidence warnings
 
@@ -727,26 +677,26 @@ Step 28 — Production hardening
 
   Week 1:  Python async/await, FastAPI BackgroundTasks
            SQLAlchemy async + asyncpg, Alembic migrations
-           PostgreSQL — UUID keys, JSONB, indexes
+           PostgreSQL — UUID keys, JSONB columns
 
   Week 2:  Embeddings + cosine similarity
            OpenSearch — KNN index mapping, filter queries
            boto3 — S3 upload, download, put_object
 
-  Week 3:  LangChain — loaders, splitters, retrievers, memory
+  Week 3:  LangChain — splitters, retrievers, memory
            File parsing — PyMuPDF, python-pptx, python-docx
            OpenSearchVectorSearch LangChain integration
 
-  Week 4:  React + Vite + shadcn, recursive tree component
+  Week 4:  React + Vite + shadcn
            Polling pattern for async status updates
            Fetch + SSE streaming
 
-  Week 5:  LangGraph — state with scope, nodes, conditional edges
+  Week 5:  LangGraph — state with workspace_id, nodes, edges
 
   Week 6:  PostgreSQL analytics queries (GROUP BY, JSONB ops)
 
-  Week 7+: RDS + RDS Proxy, ECS deployment,
-           AWS Secrets Manager, production hardening
+  Week 7+: RDS + RDS Proxy, ECS, Secrets Manager,
+           production hardening
 
 
 ================================================================
@@ -758,12 +708,9 @@ Step 28 — Production hardening
   For weeks 1-2: skip AWS entirely.
     - Run PostgreSQL locally with Docker
     - Run OpenSearch locally with Docker
-    - Use the local filesystem instead of S3
+    - Use local filesystem instead of S3
       (swap boto3 calls for open()/write() during dev)
     - BackgroundTasks work identically locally and in production
-
-  When ready for AWS: swap the local filesystem helpers in s3.py
-  for real boto3 calls. Everything else stays the same.
 
   Local dev commands:
     docker run -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:16
