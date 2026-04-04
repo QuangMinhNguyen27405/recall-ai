@@ -32,16 +32,22 @@ services:
     volumes:
       - localstack_data:/var/lib/localstack
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_localstack/health || exit 1",
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
 
   opensearch:
-    image: opensearchproject/opensearch:2
+    image: public.ecr.aws/opensearchproject/opensearch:3
     container_name: recallai-opensearch
     environment:
       - discovery.type=single-node
+      - OPENSEARCH_USERNAME=admin
+      - OPENSEARCH_PASSWORD=password
       - DISABLE_SECURITY_PLUGIN=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
@@ -52,7 +58,33 @@ services:
     volumes:
       - opensearch_data:/usr/share/opensearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:9200/_cluster/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensearch-dashboards:
+    image: public.ecr.aws/opensearchproject/opensearch-dashboards:3
+    container_name: recallai-opensearch-dashboards
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    networks:
+      - recallai-network
+    volumes:
+      - opensearch-dashboards_data:/usr/share/opensearch-dashboards/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:5601/_cluster/health || exit 1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -61,6 +93,7 @@ volumes:
   db_data:
   localstack_data:
   opensearch_data:
+  opensearch-dashboards_data:
 
 networks:
   recallai-network:
