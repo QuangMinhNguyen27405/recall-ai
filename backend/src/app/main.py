@@ -7,24 +7,24 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
+from app.api import api_router
 from app.config.logger import logger
 from app.config.settings import settings
+from app.db import engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        engine = create_async_engine(settings.database_url)
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
-        await engine.dispose()
         logger.info("✅ Database initialized successfully")
     except Exception as e:
         logger.error(f"❌ Error initializing database: {e}")
         raise e
     yield
+    await engine.dispose()
 
 app = FastAPI(title="RecallAI", lifespan=lifespan)
 
@@ -34,6 +34,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )   
+app.include_router(api_router)
+
 @app.get("/health")
 async def health():
     """

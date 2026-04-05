@@ -45,29 +45,54 @@ to the active workspace only.
 
 Step 1 — Set up your project and environment
 
-  Folder structure:
+  Current backend architecture (implemented):
     recallai/
     ├── backend/
     │   ├── src/app/
     │   │   ├── main.py
+    │   │   ├── api/
+    │   │   │   ├── __init__.py
+    │   │   │   └── router.py        ← mounts feature routers under /api
+    │   │   ├── db/
+    │   │   │   ├── __init__.py
+    │   │   │   └── session.py       ← SQLAlchemy async engine + get_session
     │   │   ├── config/
     │   │   │   ├── settings.py      ← Pydantic settings (env vars)
     │   │   │   └── logger.py        ← logging setup
+    │   │   ├── users/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── model.py
+    │   │   │   ├── schemas.py
+    │   │   │   ├── crud.py
+    │   │   │   └── router.py
+    │   │   ├── workspaces/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── model.py
+    │   │   │   ├── schemas.py
+    │   │   │   ├── crud.py
+    │   │   │   └── router.py
+    │   │   ├── files/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── model.py
+    │   │   │   ├── schemas.py
+    │   │   │   ├── crud.py
+    │   │   │   └── router.py
+    │   │   ├── chat_sessions/
+    │   │   │   ├── __init__.py
+    │   │   │   ├── model.py
+    │   │   │   ├── schemas.py
+    │   │   │   ├── crud.py
+    │   │   │   └── router.py
     │   │   ├── models/
-    │   │   │   ├── user.py          ← User model
-    │   │   │   ├── workspace.py     ← Workspace model
-    │   │   │   ├── file.py          ← File model (upload status, s3_key)
-    │   │   │   └── chat_sessions.py ← ChatSession model (JSONB messages)
-    │   │   ├── database.py          ← async PostgreSQL connection pool
+    │   │   │   ├── __init__.py
+    │   │   │   ├── user.py
+    │   │   │   ├── workspace.py
+    │   │   │   ├── file.py
+    │   │   │   └── chat_session.py  ← compatibility re-exports
     │   │   ├── pipeline/
     │   │   │   ├── parser.py        ← PDF / PPTX / DOCX / TXT parsing
     │   │   │   ├── chunker.py       ← text splitting logic
     │   │   │   └── embedder.py      ← embed + store in OpenSearch
-    │   │   ├── routes/
-    │   │   │   ├── workspaces.py    ← workspace CRUD
-    │   │   │   ├── files.py         ← file upload + status polling
-    │   │   │   ├── notes.py         ← text note input
-    │   │   │   └── chat.py          ← workspace-scoped Q&A
     │   │   ├── services/
     │   │   │   ├── s3.py            ← boto3 S3 helpers
     │   │   │   └── opensearch.py    ← OpenSearch client + search
@@ -115,61 +140,75 @@ Step 1 — Set up your project and environment
     docker run -p 9200:9200 opensearchproject/opensearch:2
     (use local filesystem instead of S3 during dev — swap later)
 
-Step 2 — Set up PostgreSQL with SQLAlchemy + Alembic (models.py)
+Step 2 — Set up PostgreSQL with SQLAlchemy + Alembic (current session layer)
 
-  database.py — async connection pool:
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-    from sqlalchemy.orm import sessionmaker
+  db/session.py — async engine + session dependency:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlmodel.ext.asyncio.session import AsyncSession
 
-    DATABASE_URL = "postgresql+asyncpg://user:pass@host/recallai"
-    engine = create_async_engine(DATABASE_URL, pool_size=10)
-    AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession)
+    engine = create_async_engine(settings.database_url, future=True)
+    AsyncSessionLocal = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async def get_session():
+        async with AsyncSessionLocal() as session:
+            yield session
 
   Tables:
 
+    users
+      id, username, email, password, created_at, updated_at
+
     workspaces
-      id (UUID), name, user_id, created_at
+      id, name, user_id (FK user.id, ON DELETE CASCADE), created_at
 
     files
-      id (UUID), name, s3_key, workspace_id (FK),
-      file_type (pdf | pptx | docx | txt | text_note),
-      status (processing | ready | error),
-      error_reason (nullable),
-      ingested_at (nullable), created_at
+      id, name, s3_key, user_id (FK user.id, ON DELETE CASCADE),
+      workspace_id (FK workspace.id, ON DELETE CASCADE),
+      status (unprocessed | processing | ready | error),
+      error_reason (nullable), ingested_at (nullable),
+      created_at, updated_at
 
     chat_sessions
-      id (UUID), workspace_id (FK), session_id,
-      messages (JSONB), updated_at
-
-    quiz_results
-      id (UUID), workspace_id (FK), question, chosen_answer,
-      correct_answer, is_correct, created_at
-
-    flashcard_sets
-      id (UUID), workspace_id (FK), name,
-      cards (JSONB), created_at
-
-    gap_reports
-      id (UUID), workspace_id (FK), syllabus_text,
-      gaps (JSONB), created_at
-
-    query_log
-      id (UUID), workspace_id (FK), question, scope (JSONB),
-      answer, sources (JSONB), is_grounded,
-      confidence_score, created_at
+      id, user_id (FK user.id, ON DELETE CASCADE),
+      workspace_id (FK workspace.id, ON DELETE CASCADE),
+      session_id, messages (JSONB), created_at, updated_at
 
   Alembic setup:
     alembic init alembic
     alembic revision --autogenerate -m "initial schema"
     alembic upgrade head
 
-  Workspace API endpoints:
-    POST   /api/workspaces           create a workspace
-    GET    /api/workspaces           list all workspaces
-    GET    /api/workspaces/{id}      get workspace + its files
-    PATCH  /api/workspaces/{id}      rename a workspace
-    DELETE /api/workspaces/{id}      delete workspace + all files
-                                     + purge OpenSearch chunks
+  Current API modules/endpoints:
+    users:
+      POST   /api/users
+      GET    /api/users
+      GET    /api/users/{user_id}
+      DELETE /api/users/{user_id}
+    workspaces:
+      POST   /api/workspaces
+      GET    /api/workspaces
+      GET    /api/workspaces/{workspace_id}
+      DELETE /api/workspaces/{workspace_id}
+    files:
+      POST   /api/files
+      GET    /api/files
+      GET    /api/files/{file_id}
+      DELETE /api/files/{file_id}
+    chat sessions:
+      POST   /api/chat-sessions
+      GET    /api/chat-sessions
+      GET    /api/chat-sessions/{chat_session_id}
+      DELETE /api/chat-sessions/{chat_session_id}
+
+  Current vs planned:
+    The implemented schema currently includes users, workspaces,
+    files, and chat_sessions. Tables like quiz_results,
+    flashcard_sets, gap_reports, and query_log remain planned
+    for later phases.
 
 Step 3 — Set up Amazon OpenSearch Serverless
 
@@ -238,7 +277,7 @@ Step 4 — Build the parsing pipeline (pipeline/)
         except Exception as e:
             await db.update_file_status(file_id, "error", str(e))
 
-Step 5 — Build the file upload route (routes/files.py)
+Step 5 — Build the file upload route (app/files/router.py)
 
   @router.post("/workspaces/{workspace_id}/upload")
   async def upload_file(
@@ -286,7 +325,7 @@ Step 5 — Build the file upload route (routes/files.py)
     → reset status = "processing"
     → re-trigger run_pipeline() as a new background task
 
-Step 6 — Build the text note route (routes/notes.py)
+Step 6 — Build the text note route (app/files/router.py or app/notes/router.py)
 
   @router.post("/workspaces/{workspace_id}/notes")
   async def create_text_note(
@@ -600,28 +639,21 @@ Step 27 — Production hardening
   POSTGRESQL SCHEMA SUMMARY
 ================================================================
 
-  workspaces       id, name, user_id, created_at
+  users            id, username, email, password,
+                   created_at, updated_at
 
-  files            id, name, s3_key, workspace_id (FK),
-                   file_type, status, error_reason,
-                   ingested_at, created_at
+  workspaces       id, user_id (FK user.id, ON DELETE CASCADE),
+                   name, created_at
 
-  chat_sessions    id, workspace_id (FK), session_id,
-                   messages (JSONB), updated_at
+  files            id, user_id (FK user.id, ON DELETE CASCADE),
+                   workspace_id (FK workspace.id, ON DELETE CASCADE),
+                   name, s3_key, status, error_reason,
+                   ingested_at, created_at, updated_at
 
-  quiz_results     id, workspace_id (FK), question,
-                   chosen_answer, correct_answer,
-                   is_correct, created_at
-
-  flashcard_sets   id, workspace_id (FK), name,
-                   cards (JSONB), created_at
-
-  gap_reports      id, workspace_id (FK), syllabus_text,
-                   gaps (JSONB), created_at
-
-  query_log        id, workspace_id (FK), question,
-                   scope (JSONB), answer, sources (JSONB),
-                   is_grounded, confidence_score, created_at
+  chat_sessions    id, user_id (FK user.id, ON DELETE CASCADE),
+                   workspace_id (FK workspace.id, ON DELETE CASCADE),
+                   session_id, messages (JSONB),
+                   created_at, updated_at
 
   S3 key structure:
     workspaces/{workspace_id}/{filename}         ← files

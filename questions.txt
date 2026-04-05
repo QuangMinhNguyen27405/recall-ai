@@ -1,5 +1,55 @@
 Questions and answers for the recallai project.
 
+Retrieval-Augumented System:
+1. Knowledge-base construction:
+   1. Ingestion:
+      - Get data into your system in a usable format.
+      -PDF, PPTX, DOCX, TXT, text_note -> text + page number per page
+   2. Chunking:
+      - Split the text into smaller chunks.
+      - Because context window is limited, we need to split the text into smaller chunks.
+      - Preserve page number in each chunk metadata
+   3. Embedding:
+      - Convert the text into a vector.
+      - Use a pre-trained model to convert the text into a vector.
+      - The vector is a high-dimensional space.
+      - The vector is used to represent the text and search the database.
+   4. Indexing: 
+      - Store embeddings so you can search them fast.
+      - Store metadata like file name, page number, etc.
+      - Store the embeddings in a vector database.
+      - Enable k-NN search (nearest neighbors) to find the most similar embeddings.
+2. Retrieval pipeline:
+   1. Retrieval: 
+      - Retrieve the most similar embeddings from the database.
+      - Find relevant chunks from the database.
+      - This is semantic search, not keyword search
+   2. Reranking:
+      - Rerank the chunks based on the relevance to the query.
+      - This is to improve the quality of the results.
+   3. Contextualization:
+      - Contextualize the results based on the query.
+      - Combine chunks, format prompt for LLM to answer the question.
+      - This is to improve the quality of the results.
+
 AWS Open Search Service:
 1. What is the aws open search service, and why do we need it?
 2. What is the difference between the aws open search service and the aws elasticsearch service?
+
+Vector Database:
+1. What is a vector database, and why do we need it?
+A vector database is a database that stores vectors. Vectors are a type of data that is used to represent data in a high-dimensional space.
+
+2. What is the difference between a vector database and a traditional database?
+A traditional database is a database that stores data in a tabular format. A vector database is a database that stores data in a vector format.
+3. What are the benefits of using a vector database?
+The benefits of using a vector database are that it is more efficient than a traditional database because it can store data in a vector format.
+
+4. What are the drawbacks of using a vector database?
+The drawbacks of using a vector database are that it is more complex than a traditional database because it requires more computation to store and retrieve data.
+
+5. What are the use cases for a vector database?
+The use cases for a vector database are that it is used for machine learning and artificial intelligence.
+
+6. What are the best vector databases for the recallai project?
+The best vector databases for the recallai project are OpenSearch and Pinecone.
