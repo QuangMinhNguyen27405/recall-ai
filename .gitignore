@@ -35,7 +35,7 @@ Thumbs.db
 
 # IDEs
 .vscode/*
-.cursor/*
+.cursor/mcp.json
 !.vscode/extensions.json
 .idea/
 *.suo

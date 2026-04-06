@@ -1,0 +1,10 @@
+---
+description: Write concise code with minimal comments
+alwaysApply: true
+---
+
+# Concise Code Style
+
+- Be concise — prefer shorter, clear implementations over verbose ones.
+- Minimize comments. Only comment non-obvious intent, trade-offs, or constraints. Never narrate what the code already says.
+- Avoid boilerplate explanations in commit messages, PR descriptions, and code reviews.

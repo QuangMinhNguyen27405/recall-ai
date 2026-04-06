@@ -1,10 +1,6 @@
-from __future__ import annotations
-
 import enum
 from datetime import datetime
 
-from app.users import User
-from app.workspaces.model import Workspace
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -24,8 +20,8 @@ class File(SQLModel, table=True):
         default=None, foreign_key="workspace.id", ondelete="CASCADE"
     )
 
-    user: "User | None" = Relationship(back_populates="files")
-    workspace: "Workspace | None" = Relationship(back_populates="files")
+    user: "User" = Relationship(back_populates="files")  # pyright: ignore[reportUndefinedVariable]
+    workspace: "Workspace" = Relationship(back_populates="files")  # pyright: ignore[reportUndefinedVariable]
 
     name: str = Field(nullable=False)
     s3_key: str = Field(nullable=False)

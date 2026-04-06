@@ -1,0 +1,12 @@
+Biology 101 - Lecture 1: Introduction
+
+Cells are the basic unit of life. All living organisms are made of one or more cells.
+Key themes:
+- Structure and function are closely related.
+- Energy transformation is essential for life.
+- Homeostasis keeps internal conditions stable.
+
+Important terms:
+- Prokaryote: cell without nucleus.
+- Eukaryote: cell with nucleus and membrane-bound organelles.
+- Metabolism: all chemical reactions in an organism.

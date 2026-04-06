@@ -1,0 +1,13 @@
+---
+description: Keep GitHub issues and PRs in sync when plan.txt is updated
+alwaysApply: true
+---
+
+# Sync plan.txt with GitHub
+
+When `plan.txt` is approved and updated (e.g. a phase marked complete, tasks added/removed, scope changed):
+
+1. **Update related GitHub issues** — close completed issues, update descriptions or checklists to reflect the new plan state.
+2. **Update related pull requests** — edit PR descriptions/titles if the plan changes affect open PRs.
+3. Use the `gh` CLI (via Shell) to make these updates.
+4. Summarize what was synced so the user can verify.

@@ -1,0 +1,11 @@
+Biology 101 - Lecture 2: Membrane Transport
+
+Cell membranes are selectively permeable and regulate movement of substances.
+Transport types:
+- Passive transport: diffusion, osmosis, facilitated diffusion.
+- Active transport: requires ATP to move substances against gradients.
+
+Examples:
+- Sodium-potassium pump is active transport.
+- Oxygen moves into cells by diffusion.
+- Water movement depends on solute concentration differences.

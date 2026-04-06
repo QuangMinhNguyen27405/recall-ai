@@ -1,10 +1,4 @@
-from __future__ import annotations
-
 from datetime import datetime
-
-from app.chat_sessions import ChatSession
-from app.files.model import File
-from app.users.model import User
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -14,9 +8,9 @@ class Workspace(SQLModel, table=True):
         default=None, foreign_key="user.id", ondelete="CASCADE"
     )
 
-    user: "User | None" = Relationship(back_populates="workspaces")
-    files: list["File"] = Relationship(back_populates="workspace", cascade_delete=True)
-    chat_sessions: list["ChatSession"] = Relationship(
+    user: "User" = Relationship(back_populates="workspaces")  # pyright: ignore[reportUndefinedVariable]
+    files: list["File"] = Relationship(back_populates="workspace", cascade_delete=True)  # pyright: ignore[reportUndefinedVariable]
+    chat_sessions: list["ChatSession"] = Relationship(  # pyright: ignore[reportUndefinedVariable]
         back_populates="workspace", cascade_delete=True
     )
 

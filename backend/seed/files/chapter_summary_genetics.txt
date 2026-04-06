@@ -1,0 +1,13 @@
+Biology 101 - Chapter Summary: Genetics
+
+Genes are segments of DNA that encode functional products.
+Core concepts:
+- Genotype is genetic makeup.
+- Phenotype is observable traits.
+- Dominant and recessive alleles influence inheritance patterns.
+
+Mendelian inheritance:
+- Law of segregation
+- Law of independent assortment
+
+Mutations can introduce variation and may be neutral, beneficial, or harmful.
