@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     aws_access_key_id: str = "test"
     aws_secret_access_key: str = "test"
     s3_bucket: str = "recallai-files"
+    openai_api_key: str = "test"
     anthropic_api_key: str = "test"
     langchain_tracing_v2: bool = True
     langchain_api_key: str = "test"

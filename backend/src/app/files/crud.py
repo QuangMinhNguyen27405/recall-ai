@@ -16,6 +16,18 @@ async def create_file(session: AsyncSession, data: FileCreate) -> File:
 async def get_file(session: AsyncSession, file_id: int) -> File | None:
     return await session.get(File, file_id)
 
+async def update_file(session: AsyncSession, file_id: int, data: dict) -> File:
+    file = await session.get(File, file_id)
+    if file is None:
+        raise ValueError(f"File id={file_id} not found")
+    for key, value in data.items():
+        if hasattr(file, key):
+            setattr(file, key, value)
+            
+    session.add(file)
+    await session.commit()
+    await session.refresh(file)
+    return file
 
 async def list_files(
     session: AsyncSession,
