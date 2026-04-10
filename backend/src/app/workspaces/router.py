@@ -1,9 +1,9 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db.session import get_session
-from app.workspaces import crud
+from app.workspaces import service
 from app.workspaces.schemas import WorkspaceCreate, WorkspaceRead
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 async def create_workspace(
     payload: WorkspaceCreate, session: AsyncSession = Depends(get_session)
 ) -> WorkspaceRead:
-    workspace = await crud.create_workspace(session, payload)
+    workspace = await service.create_workspace(session, payload)
     return WorkspaceRead.model_validate(workspace)
 
 
@@ -22,7 +22,7 @@ async def list_workspaces(
     user_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkspaceRead]:
-    workspaces = await crud.list_workspaces(session, user_id=user_id)
+    workspaces = await service.list_workspaces(session, user_id=user_id)
     return [WorkspaceRead.model_validate(workspace) for workspace in workspaces]
 
 
@@ -30,9 +30,7 @@ async def list_workspaces(
 async def get_workspace(
     workspace_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> WorkspaceRead:
-    workspace = await crud.get_workspace(session, workspace_id)
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace = await service.get_workspace(session, workspace_id)
     return WorkspaceRead.model_validate(workspace)
 
 
@@ -40,7 +38,4 @@ async def get_workspace(
 async def delete_workspace(
     workspace_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> None:
-    workspace = await crud.get_workspace(session, workspace_id)
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    await crud.delete_workspace(session, workspace)
+    await service.delete_workspace(session, workspace_id)

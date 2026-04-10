@@ -23,6 +23,9 @@ async def list_users(session: AsyncSession) -> list[User]:
     return result.all()
 
 
-async def delete_user(session: AsyncSession, user: User) -> None:
+async def delete_user(session: AsyncSession, user_id: UUID) -> None:
+    user = await session.get(User, user_id)
+    if user is None:
+        return
     await session.delete(user)
     await session.commit()

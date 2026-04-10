@@ -1,8 +1,8 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.chat_sessions import crud
+from app.chat_sessions import service
 from app.chat_sessions.schemas import ChatSessionCreate, ChatSessionRead
 from app.db.session import get_session
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/chat-sessions", tags=["chat-sessions"])
 async def create_chat_session(
     payload: ChatSessionCreate, session: AsyncSession = Depends(get_session)
 ) -> ChatSessionRead:
-    chat_session = await crud.create_chat_session(session, payload)
+    chat_session = await service.create_chat_session(session, payload)
     return ChatSessionRead.model_validate(chat_session)
 
 
@@ -23,7 +23,7 @@ async def list_chat_sessions(
     workspace_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[ChatSessionRead]:
-    sessions = await crud.list_chat_sessions(
+    sessions = await service.list_chat_sessions(
         session, user_id=user_id, workspace_id=workspace_id
     )
     return [ChatSessionRead.model_validate(chat_session) for chat_session in sessions]
@@ -33,9 +33,7 @@ async def list_chat_sessions(
 async def get_chat_session(
     chat_session_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> ChatSessionRead:
-    chat_session = await crud.get_chat_session(session, chat_session_id)
-    if chat_session is None:
-        raise HTTPException(status_code=404, detail="Chat session not found")
+    chat_session = await service.get_chat_session(session, chat_session_id)
     return ChatSessionRead.model_validate(chat_session)
 
 
@@ -43,7 +41,4 @@ async def get_chat_session(
 async def delete_chat_session(
     chat_session_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> None:
-    chat_session = await crud.get_chat_session(session, chat_session_id)
-    if chat_session is None:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    await crud.delete_chat_session(session, chat_session)
+    await service.delete_chat_session(session, chat_session_id)

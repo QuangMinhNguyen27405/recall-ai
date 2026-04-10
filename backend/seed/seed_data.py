@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 import boto3
@@ -14,6 +13,7 @@ from app.config.settings import settings
 from app.db.session import AsyncSessionLocal, engine
 from app.files.model import File, FileStatus
 from app.chat_sessions.model import ChatSession  # noqa: F401
+from app.pipeline.ingestion import start_ingestion
 from app.users.model import User
 from app.workspaces.model import Workspace
 
@@ -90,59 +90,49 @@ async def _upsert_user_and_workspace() -> tuple[User, Workspace]:
     return user, workspace
 
 
-async def _upsert_files_and_upload(user: User, workspace: Workspace, *, skip_s3: bool) -> list[File]:
+async def _upsert_files_and_upload(
+    user: User, workspace: Workspace, *, skip_s3: bool
+) -> list[File]:
     s3 = None
     if not skip_s3:
         s3 = _build_s3_client()
         _ensure_bucket(s3)
 
-    now = datetime.now()
     created_or_updated: list[File] = []
+    text_files = _seed_files()
     async with AsyncSessionLocal() as session:
-        for file_path in _seed_files():
-            s3_key = f"seed/workspaces/{workspace.id}/{file_path.name}"
-            if s3 is not None:
-                body = file_path.read_bytes()
-                s3.put_object(
-                    Bucket=settings.s3_bucket,
-                    Key=s3_key,
-                    Body=body,
-                    ContentType="text/plain",
-                )
-
-            result = await session.exec(
-                select(File).where(
-                    and_(
-                        File.user_id == user.id,
-                        File.workspace_id == workspace.id,
-                        File.s3_key == s3_key,
-                    )
-                )
+        for file_path in text_files:
+            s3_key = f"/users/{user.id}/workspaces/{workspace.id}/files/{file_path.name}"
+            file = File(
+                user_id=user.id,
+                workspace_id=workspace.id,
+                name=file_path.name,
+                s3_key=s3_key,
+                status=FileStatus.unprocessed,
             )
-            db_file = result.first()
-            if db_file is None:
-                db_file = File(
-                    user_id=user.id,
-                    workspace_id=workspace.id,
-                    name=file_path.name,
-                    s3_key=s3_key,
-                    status=FileStatus.ready,
-                    ingested_at=now,
-                )
-                session.add(db_file)
-            else:
-                db_file.name = file_path.name
-                db_file.status = FileStatus.ready
-                db_file.ingested_at = now
-                db_file.updated_at = now
-
-            created_or_updated.append(db_file)
-
-        await session.commit()
-        for db_file in created_or_updated:
-            await session.refresh(db_file)
-
+            session.add(file)
+            await session.commit()
+            await session.refresh(file)
+            if not skip_s3:
+                s3.upload_file(file_path, settings.s3_bucket, s3_key)
+                
+            created_or_updated.append(file)
     return created_or_updated
+
+
+async def _ingest_seeded_files(
+    files: list[File], *, skip_ingestion: bool
+) -> list[tuple[File, dict | None]]:
+    if skip_ingestion:
+        return [(file, None) for file in files]
+
+    ingested_files: list[tuple[File, dict | None]] = []
+    for file in files:
+        result = await start_ingestion(file.id)
+        async with AsyncSessionLocal() as session:
+            refreshed_file = await session.get(File, file.id) or file
+        ingested_files.append((refreshed_file, result))
+    return ingested_files
 
 
 async def main() -> None:
@@ -161,6 +151,11 @@ async def main() -> None:
         action="store_true",
         help="Skip S3 bucket/object upload and only seed PostgreSQL rows.",
     )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        help="Skip running the ingestion pipeline after seeding files.",
+    )
     args = parser.parse_args()
 
     if args.command == "drop-all":
@@ -175,6 +170,10 @@ async def main() -> None:
     await _ensure_tables()
     user, workspace = await _upsert_user_and_workspace()
     files = await _upsert_files_and_upload(user, workspace, skip_s3=args.skip_s3)
+    ingested_files = await _ingest_seeded_files(
+        files,
+        skip_ingestion=args.skip_s3 or args.skip_ingestion,
+    )
 
     print("Seed completed:")
     print(f"- user_id={user.id} email={user.email}")
@@ -182,9 +181,32 @@ async def main() -> None:
     if args.skip_s3:
         print(f"- files={len(files)} seeded in database only (S3 upload skipped)")
     else:
-        print(f"- files={len(files)} uploaded to s3://{settings.s3_bucket}/seed/workspaces/{workspace.id}/")
-    for seeded_file in files:
-        print(f"  - file_id={seeded_file.id} name={seeded_file.name} status={seeded_file.status}")
+        print(
+            f"- files={len(files)} uploaded to "
+            f"s3://{settings.s3_bucket}/users/{user.id}/workspaces/{workspace.id}/files/"
+        )
+    if args.skip_s3:
+        print("- ingestion skipped because S3 upload was skipped")
+    elif args.skip_ingestion:
+        print("- ingestion skipped by flag")
+    else:
+        print(f"- ingested_files={len(ingested_files)}")
+    for seeded_file, ingestion_result in ingested_files:
+        status = seeded_file.status
+        if ingestion_result is None:
+            print(f"  - file_id={seeded_file.id} name={seeded_file.name} status={status}")
+            continue
+
+        print(
+            "  - "
+            f"file_id={seeded_file.id} "
+            f"name={seeded_file.name} "
+            f"status={status} "
+            f"docs={ingestion_result['docs_count']} "
+            f"chunks={ingestion_result['chunks_count']} "
+            f"deleted={ingestion_result['deleted_count']} "
+            f"indexed={ingestion_result['indexed_count']}"
+        )
 
 
 if __name__ == "__main__":

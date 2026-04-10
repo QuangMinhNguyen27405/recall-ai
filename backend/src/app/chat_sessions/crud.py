@@ -17,7 +17,8 @@ async def create_chat_session(
 
 
 async def get_chat_session(
-    session: AsyncSession, chat_session_id: UUID
+    session: AsyncSession,
+    chat_session_id: UUID,
 ) -> ChatSession | None:
     return await session.get(ChatSession, chat_session_id)
 
@@ -36,6 +37,9 @@ async def list_chat_sessions(
     return result.all()
 
 
-async def delete_chat_session(session: AsyncSession, chat_session: ChatSession) -> None:
+async def delete_chat_session(session: AsyncSession, chat_session_id: UUID) -> None:
+    chat_session = await session.get(ChatSession, chat_session_id)
+    if chat_session is None:
+        return
     await session.delete(chat_session)
     await session.commit()

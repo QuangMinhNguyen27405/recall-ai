@@ -26,6 +26,9 @@ async def list_workspaces(session: AsyncSession, user_id: UUID | None = None) ->
     return result.all()
 
 
-async def delete_workspace(session: AsyncSession, workspace: Workspace) -> None:
+async def delete_workspace(session: AsyncSession, workspace_id: UUID) -> None:
+    workspace = await session.get(Workspace, workspace_id)
+    if workspace is None:
+        return
     await session.delete(workspace)
     await session.commit()
