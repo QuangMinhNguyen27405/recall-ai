@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -23,7 +24,7 @@ async def list_users(session: AsyncSession = Depends(get_session)) -> list[UserR
 
 
 @router.get("/{user_id}", response_model=UserRead)
-async def get_user(user_id: int, session: AsyncSession = Depends(get_session)) -> UserRead:
+async def get_user(user_id: UUID, session: AsyncSession = Depends(get_session)) -> UserRead:
     user = await crud.get_user(session, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -31,7 +32,7 @@ async def get_user(user_id: int, session: AsyncSession = Depends(get_session)) -
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_user(user_id: UUID, session: AsyncSession = Depends(get_session)) -> None:
     user = await crud.get_user(session, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

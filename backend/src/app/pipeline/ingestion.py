@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import hashlib
 import sys
+from uuid import UUID
 from urllib.parse import urlparse
 
 from app.chat_sessions.model import ChatSession  # noqa: F401
@@ -22,7 +23,7 @@ from opensearchpy.helpers import bulk
 INDEX_NAME = "notes"
 EMBEDDING_DIMENSION = 384
 
-async def start_ingestion(file_id: int) -> dict:
+async def start_ingestion(file_id: UUID) -> dict:
     """
     Start the ingestion pipeline for a file.
     """
@@ -154,7 +155,7 @@ def resolve_page_number(chunk, fallback: int) -> int:
         return fallback
 
 
-def delete_existing_file_chunks(opensearch_client: OpenSearch, file_id: int | None) -> int:
+def delete_existing_file_chunks(opensearch_client: OpenSearch, file_id: UUID | None) -> int:
     if file_id is None:
         return 0
 
@@ -167,7 +168,7 @@ def delete_existing_file_chunks(opensearch_client: OpenSearch, file_id: int | No
     return int(response.get("deleted", 0))
 
 
-def chunk_document_id(file_id: int | None, page: int, chunk_text: str, ordinal: int) -> str:
+def chunk_document_id(file_id: UUID | None, page: int, chunk_text: str, ordinal: int) -> str:
     payload = f"{file_id or 'unknown'}:{page}:{ordinal}:{chunk_text}".encode("utf-8")
     digest = hashlib.sha1(payload).hexdigest()
     return f"{file_id or 'unknown'}:{page}:{ordinal}:{digest}"

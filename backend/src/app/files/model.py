@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime
+from uuid import UUID, uuid4
 
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -12,11 +13,11 @@ class FileStatus(str, enum.Enum):
 
 
 class File(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    user_id: int | None = Field(
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID | None = Field(
         default=None, foreign_key="user.id", ondelete="CASCADE"
     )
-    workspace_id: int | None = Field(
+    workspace_id: UUID | None = Field(
         default=None, foreign_key="workspace.id", ondelete="CASCADE"
     )
 

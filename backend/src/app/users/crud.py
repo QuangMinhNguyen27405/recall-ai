@@ -3,6 +3,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.users.model import User
 from app.users.schemas import UserCreate
+from uuid import UUID
 
 
 async def create_user(session: AsyncSession, data: UserCreate) -> User:
@@ -13,7 +14,7 @@ async def create_user(session: AsyncSession, data: UserCreate) -> User:
     return user
 
 
-async def get_user(session: AsyncSession, user_id: int) -> User | None:
+async def get_user(session: AsyncSession, user_id: UUID) -> User | None:
     return await session.get(User, user_id)
 
 

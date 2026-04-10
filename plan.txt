@@ -19,10 +19,11 @@ to the active workspace only.
     └── lecture_notes (text note)
 
   Upload pipeline (file):
-    Browser → POST /api/workspaces/{id}/upload (multipart)
-    FastAPI → save to S3 → create DB record (status=processing)
-    FastAPI → return {file_id, status} immediately
-    BackgroundTask → parse → chunk → embed → OpenSearch
+    Browser → POST /api/workspaces/{id}/uploads/init (metadata only)
+    FastAPI → create DB record (status=processing) + presigned S3 upload URL
+    Browser → PUT file directly to S3 with presigned URL
+    S3 ObjectCreated event → POST /api/files/s3-events
+    FastAPI background task → parse → chunk → embed → OpenSearch
     BackgroundTask → update status=ready in PostgreSQL
     Frontend polls GET /api/files/{id}/status every 2s
 
@@ -277,37 +278,74 @@ Step 4 — Build the parsing pipeline (pipeline/)
         except Exception as e:
             await db.update_file_status(file_id, "error", str(e))
 
-Step 5 — Build the file upload route (app/files/router.py)
+Step 5 — Build direct-to-S3 upload + event trigger (app/files/router.py)
 
-  @router.post("/workspaces/{workspace_id}/upload")
-  async def upload_file(
-      workspace_id: str,
-      file: UploadFile,
-      background_tasks: BackgroundTasks,
-      db: AsyncSession = Depends(get_db)
-  ):
-      # 1. Upload to S3
-      s3_key = f"workspaces/{workspace_id}/{file.filename}"
-      await s3.upload_fileobj(file.file, S3_BUCKET, s3_key)
+  5.1 Init upload (frontend asks backend for upload permission)
 
-      # 2. Insert file record (status=processing)
-      file_record = await db.create_file(
-          name=file.filename,
-          s3_key=s3_key,
-          workspace_id=workspace_id,
-          status="processing"
-      )
+    @router.post("/workspaces/{workspace_id}/uploads/init")
+    async def init_file_upload(
+        workspace_id: UUID,
+        body: UploadInitInput,  # {filename, content_type, size, user_id}
+        db: AsyncSession = Depends(get_db),
+    ):
+        # 1. Build deterministic key and create DB row first
+        file_id = uuid4()
+        s3_key = f"workspaces/{workspace_id}/files/{file_id}/{body.filename}"
 
-      # 3. Fire background task — returns to client immediately
-      background_tasks.add_task(
-          run_pipeline,
-          file_id=file_record.id,
-          s3_key=s3_key,
-          file_type=file.content_type,
-          metadata={"workspace_id": workspace_id, ...}
-      )
+        file_record = await db.create_file(
+            name=body.filename,
+            s3_key=s3_key,
+            user_id=body.user_id,
+            workspace_id=workspace_id,
+            status="processing",
+        )
 
-      return {"file_id": file_record.id, "status": "processing"}
+        # 2. Create presigned PUT URL (short expiry)
+        upload_url = s3.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": S3_BUCKET,
+                "Key": s3_key,
+                "ContentType": body.content_type,
+            },
+            ExpiresIn=900,
+        )
+
+        # 3. Frontend uploads directly to S3
+        return {
+            "file_id": file_record.id,
+            "s3_key": s3_key,
+            "upload_url": upload_url,
+            "status": "processing",
+        }
+
+  5.2 S3 event callback (S3 -> FastAPI)
+
+    @router.post("/files/s3-events")
+    async def on_s3_object_created(
+        event: S3EventPayload,
+        background_tasks: BackgroundTasks,
+        db: AsyncSession = Depends(get_db),
+    ):
+        # 1. Parse each ObjectCreated record
+        # 2. Resolve file row by s3_key
+        # 3. Idempotency guard: skip if file is already ready/processing trigger already seen
+        # 4. Enqueue shared ingestion pipeline
+        background_tasks.add_task(
+            run_pipeline,
+            file_id=file_record.id,
+            s3_key=file_record.s3_key,
+            file_type=detected_file_type,
+            metadata={"workspace_id": file_record.workspace_id, ...},
+        )
+        return {"accepted": True}
+
+  S3 notification config:
+    - Configure `s3:ObjectCreated:*` notification on the bucket
+    - Destination can be:
+      1) SNS/SQS/Lambda in AWS, then call backend worker, or
+      2) LocalStack webhook target pointing to `/api/files/s3-events` for local dev
+    - Validate bucket/key in callback and require a shared secret header for safety
 
   File status endpoint:
     GET /api/files/{id}/status
@@ -430,7 +468,7 @@ Step 10 — Build ChatWindow.tsx and FileUpload.tsx
     Tab 1: File upload
       shadcn <Card> drag-and-drop zone
       Accepted types: PDF, PPTX, DOCX, TXT
-      Calls POST /api/workspaces/{id}/upload
+      Calls POST /api/workspaces/{id}/uploads/init, then PUT to presigned URL
     Tab 2: Text note
       shadcn <Input> for title
       shadcn <Textarea> for content

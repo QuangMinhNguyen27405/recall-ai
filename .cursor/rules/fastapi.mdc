@@ -118,7 +118,7 @@ Version your API from day one. Keep router endpoints focused, delegating busines
 ```python
 # app/main.py
 @app.get("/users/{user_id}")
-def get_user_details(user_id: int, db: 'Session'): # Placeholder
+def get_user_details(user_id: UUID, db: 'Session'): # Placeholder
     user = None # db.query(User).filter(User.id == user_id).first()
     # Complex business logic here
     return user
@@ -136,12 +136,12 @@ from fastapi import APIRouter, Depends
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
 @router.get("/{user_id}", response_model=None) # Placeholder for schemas.UserOut
-async def read_user(user_id: int, db: 'AsyncSession' = Depends(lambda: None)): # Placeholder
+async def read_user(user_id: UUID, db: 'AsyncSession' = Depends(lambda: None)): # Placeholder
     user = None # await service.get_user_by_id(db, user_id)
     return user
 
 # src/users/service.py
-async def get_user_by_id(db: 'AsyncSession', user_id: int) -> 'User': # Placeholder
+async def get_user_by_id(db: 'AsyncSession', user_id: UUID) -> 'User': # Placeholder
     # Database query logic
     return None # await db.get(User, user_id)
 ```
@@ -155,7 +155,7 @@ Raise `HTTPException` for API-specific errors. Implement custom handlers for glo
 ```python
 items_db = {1: {"name": "item1"}}
 @app.get("/items/{item_id}")
-async def get_item(item_id: int):
+async def get_item(item_id: UUID):
     if item_id not in items_db:
         raise ValueError("Item not found") # Returns 500
     return items_db[item_id]
@@ -168,7 +168,7 @@ from fastapi import HTTPException, status
 
 items_db = {1: {"name": "item1"}}
 @app.get("/items/{item_id}")
-async def get_item_good(item_id: int):
+async def get_item_good(item_id: UUID):
     if item_id not in items_db:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

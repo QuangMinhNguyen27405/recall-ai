@@ -15,6 +15,24 @@ From the `backend/` directory:
 poetry run python ../seed/seed_data.py
 ```
 
+Drop all tables:
+
+```bash
+poetry run python ../seed/seed_data.py drop-all
+```
+
+Drop all tables, then seed again:
+
+```bash
+poetry run python ../seed/seed_data.py reset
+```
+
+If LocalStack/S3 is unavailable, seed database rows only:
+
+```bash
+poetry run python ../seed/seed_data.py reset --skip-s3
+```
+
 ### Seeded entities
 
 - User email: `seed.student@recallai.dev`

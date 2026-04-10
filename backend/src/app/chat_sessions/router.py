@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -18,8 +19,8 @@ async def create_chat_session(
 
 @router.get("", response_model=list[ChatSessionRead])
 async def list_chat_sessions(
-    user_id: int | None = Query(default=None),
-    workspace_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
+    workspace_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[ChatSessionRead]:
     sessions = await crud.list_chat_sessions(
@@ -30,7 +31,7 @@ async def list_chat_sessions(
 
 @router.get("/{chat_session_id}", response_model=ChatSessionRead)
 async def get_chat_session(
-    chat_session_id: int, session: AsyncSession = Depends(get_session)
+    chat_session_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> ChatSessionRead:
     chat_session = await crud.get_chat_session(session, chat_session_id)
     if chat_session is None:
@@ -40,7 +41,7 @@ async def get_chat_session(
 
 @router.delete("/{chat_session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat_session(
-    chat_session_id: int, session: AsyncSession = Depends(get_session)
+    chat_session_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> None:
     chat_session = await crud.get_chat_session(session, chat_session_id)
     if chat_session is None:

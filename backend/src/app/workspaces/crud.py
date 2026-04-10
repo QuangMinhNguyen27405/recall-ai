@@ -1,3 +1,4 @@
+from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -13,11 +14,11 @@ async def create_workspace(session: AsyncSession, data: WorkspaceCreate) -> Work
     return workspace
 
 
-async def get_workspace(session: AsyncSession, workspace_id: int) -> Workspace | None:
+async def get_workspace(session: AsyncSession, workspace_id: UUID) -> Workspace | None:
     return await session.get(Workspace, workspace_id)
 
 
-async def list_workspaces(session: AsyncSession, user_id: int | None = None) -> list[Workspace]:
+async def list_workspaces(session: AsyncSession, user_id: UUID | None = None) -> list[Workspace]:
     statement = select(Workspace)
     if user_id is not None:
         statement = statement.where(Workspace.user_id == user_id)

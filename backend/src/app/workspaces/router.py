@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -18,7 +19,7 @@ async def create_workspace(
 
 @router.get("", response_model=list[WorkspaceRead])
 async def list_workspaces(
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkspaceRead]:
     workspaces = await crud.list_workspaces(session, user_id=user_id)
@@ -27,7 +28,7 @@ async def list_workspaces(
 
 @router.get("/{workspace_id}", response_model=WorkspaceRead)
 async def get_workspace(
-    workspace_id: int, session: AsyncSession = Depends(get_session)
+    workspace_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> WorkspaceRead:
     workspace = await crud.get_workspace(session, workspace_id)
     if workspace is None:
@@ -37,7 +38,7 @@ async def get_workspace(
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workspace(
-    workspace_id: int, session: AsyncSession = Depends(get_session)
+    workspace_id: UUID, session: AsyncSession = Depends(get_session)
 ) -> None:
     workspace = await crud.get_workspace(session, workspace_id)
     if workspace is None:

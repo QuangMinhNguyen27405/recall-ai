@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import asyncio
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +53,11 @@ async def _ensure_tables() -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
 
 
+async def _drop_all_tables() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
+
+
 async def _upsert_user_and_workspace() -> tuple[User, Workspace]:
     async with AsyncSessionLocal() as session:
         result = await session.exec(select(User).where(User.email == SEED_USER_EMAIL))
@@ -84,22 +90,25 @@ async def _upsert_user_and_workspace() -> tuple[User, Workspace]:
     return user, workspace
 
 
-async def _upsert_files_and_upload(user: User, workspace: Workspace) -> list[File]:
-    s3 = _build_s3_client()
-    _ensure_bucket(s3)
+async def _upsert_files_and_upload(user: User, workspace: Workspace, *, skip_s3: bool) -> list[File]:
+    s3 = None
+    if not skip_s3:
+        s3 = _build_s3_client()
+        _ensure_bucket(s3)
 
     now = datetime.now()
     created_or_updated: list[File] = []
     async with AsyncSessionLocal() as session:
         for file_path in _seed_files():
             s3_key = f"seed/workspaces/{workspace.id}/{file_path.name}"
-            body = file_path.read_bytes()
-            s3.put_object(
-                Bucket=settings.s3_bucket,
-                Key=s3_key,
-                Body=body,
-                ContentType="text/plain",
-            )
+            if s3 is not None:
+                body = file_path.read_bytes()
+                s3.put_object(
+                    Bucket=settings.s3_bucket,
+                    Key=s3_key,
+                    Body=body,
+                    ContentType="text/plain",
+                )
 
             result = await session.exec(
                 select(File).where(
@@ -137,14 +146,43 @@ async def _upsert_files_and_upload(user: User, workspace: Workspace) -> list[Fil
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Seed local development data and manage schema for RecallAI."
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="seed",
+        choices=["seed", "drop-all", "reset"],
+        help="seed (default), drop-all tables, or reset (drop-all + seed).",
+    )
+    parser.add_argument(
+        "--skip-s3",
+        action="store_true",
+        help="Skip S3 bucket/object upload and only seed PostgreSQL rows.",
+    )
+    args = parser.parse_args()
+
+    if args.command == "drop-all":
+        await _drop_all_tables()
+        print("Dropped all tables.")
+        return
+
+    if args.command == "reset":
+        await _drop_all_tables()
+        print("Dropped all tables.")
+
     await _ensure_tables()
     user, workspace = await _upsert_user_and_workspace()
-    files = await _upsert_files_and_upload(user, workspace)
+    files = await _upsert_files_and_upload(user, workspace, skip_s3=args.skip_s3)
 
     print("Seed completed:")
     print(f"- user_id={user.id} email={user.email}")
     print(f"- workspace_id={workspace.id} name={workspace.name}")
-    print(f"- files={len(files)} uploaded to s3://{settings.s3_bucket}/seed/workspaces/{workspace.id}/")
+    if args.skip_s3:
+        print(f"- files={len(files)} seeded in database only (S3 upload skipped)")
+    else:
+        print(f"- files={len(files)} uploaded to s3://{settings.s3_bucket}/seed/workspaces/{workspace.id}/")
     for seeded_file in files:
         print(f"  - file_id={seeded_file.id} name={seeded_file.name} status={seeded_file.status}")
 

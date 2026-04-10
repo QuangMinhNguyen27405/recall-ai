@@ -1,3 +1,4 @@
+from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -16,15 +17,15 @@ async def create_chat_session(
 
 
 async def get_chat_session(
-    session: AsyncSession, chat_session_id: int
+    session: AsyncSession, chat_session_id: UUID
 ) -> ChatSession | None:
     return await session.get(ChatSession, chat_session_id)
 
 
 async def list_chat_sessions(
     session: AsyncSession,
-    user_id: int | None = None,
-    workspace_id: int | None = None,
+    user_id: UUID | None = None,
+    workspace_id: UUID | None = None,
 ) -> list[ChatSession]:
     statement = select(ChatSession)
     if user_id is not None:
